@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head>
+<body>
+<title>Deutsch Drill</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Layout: one-screen phone app. Header with progress, a big phrase card with a live status ring, round dots, transport controls; settings and phrase list open as bottom sheets. */
+:root {
+  --bg: #EEF1F4;
+  --surface: #FFFFFF;
+  --fg: #14202B;
+  --muted: #5E6B78;
+  --line: #D5DCE3;
+  --accent: #C8342B;
+  --accent-fg: #FFFFFF;
+  --gold: #8A6A00;
+  --ok: #1E7A4F;
+  --ring: rgba(200, 52, 43, .22);
+  --f-display: 'Bricolage Grotesque', system-ui, -apple-system, sans-serif;
+  --f-body: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E151C; --surface: #17212B; --fg: #EAF0F5; --muted: #93A2B0; --line: #2A3846;
+    --accent: #FF6A5C; --accent-fg: #1A0A08; --gold: #E8C45A; --ok: #5FD39A; --ring: rgba(255, 106, 92, .3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E151C; --surface: #17212B; --fg: #EAF0F5; --muted: #93A2B0; --line: #2A3846;
+  --accent: #FF6A5C; --accent-fg: #1A0A08; --gold: #E8C45A; --ok: #5FD39A; --ring: rgba(255, 106, 92, .3);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 16px; line-height: 1.4;
+  padding-block: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#app { height: 100%; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+header { display: flex; align-items: center; gap: 8px; }
+header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0; flex: 1; }
+.count { font: 500 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.icon-btn { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
+.icon-btn svg { width: 20px; height: 20px; }
+
+.dots { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; min-height: 10px; }
+.dots i { width: 22px; height: 6px; border-radius: 3px; background: var(--line); }
+.dots i.done { background: var(--ok); }
+.dots i.now { background: var(--accent); }
+
+.card {
+  flex: 1; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
+  padding: 20px; display: flex; flex-direction: column; justify-content: center; gap: 18px; position: relative; overflow-y: auto;
+}
+.card.tappable { cursor: pointer; }
+.label { font: 500 12px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.en { font: 700 clamp(26px, 8vw, 38px)/1.12 var(--f-display); letter-spacing: -.015em; text-wrap: balance; overflow-wrap: anywhere; margin: 0; }
+.de { font: 500 clamp(22px, 6.5vw, 30px)/1.2 var(--f-display); color: var(--gold); margin: 0; min-height: 1.2em; overflow-wrap: anywhere; text-wrap: balance; }
+.de.hidden { color: var(--line); }
+
+.status { display: flex; align-items: center; gap: 12px; }
+.pulse { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
+.listening .pulse { background: var(--accent); animation: pulse 1.4s ease-out infinite; }
+.speaking .pulse { background: var(--ok); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--ring); } 100% { box-shadow: 0 0 0 16px transparent; } }
+@media (prefers-reduced-motion: reduce) { .listening .pulse { animation: none; box-shadow: 0 0 0 6px var(--ring); } }
+.status-text { font-weight: 500; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+.meter { height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
+.meter b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ok); transition: width 60ms linear; }
+.meter u { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+
+.choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn { min-height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
+.transport { display: flex; align-items: center; justify-content: center; gap: 20px; padding-bottom: 4px; }
+.t-small { width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
+.t-main { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+.transport svg { width: 26px; height: 26px; }
+.t-main svg { width: 32px; height: 32px; }
+
+.sheet { position: fixed; inset: 0; background: var(--bg); z-index: 20; display: flex; flex-direction: column;
+  padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.sheet-in { width: 100%; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; padding-bottom: 12px; }
+.sheet h2 { font: 700 20px var(--f-display); margin: 0; flex: 1; }
+.sheet-top { display: flex; align-items: center; gap: 8px; }
+.scroll { overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.field { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.field label, .field .fl { font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
+.field output { font-family: var(--f-mono); color: var(--muted); font-weight: 500; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+input[type=number], input[type=search] { width: 100%; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); padding: 0 12px; font: inherit; }
+.inline { display: flex; gap: 8px; }
+.inline > * { min-width: 0; }
+.row { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; grid-template-columns: 38px 1fr; gap: 8px; align-items: baseline; }
+.row .n { font: 500 12px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.row .t { min-width: 0; overflow-wrap: anywhere; }
+.row .t span { display: block; color: var(--muted); font-size: 14px; }
+.row.cur { border-color: var(--accent); }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.toggle input { width: 22px; height: 22px; accent-color: var(--accent); }
+</style>
+
+<div id="app">
+  <header>
+    <h1>Deutsch Drill</h1>
+    <span class="count" id="count">0 / 0</span>
+    <button class="icon-btn" id="btnList" aria-label="Phrase list and jump">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+    </button>
+    <button class="icon-btn" id="btnSettings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    </button>
+  </header>
+
+  <div class="dots" id="dots" aria-hidden="true"></div>
+
+  <section class="card" id="card" aria-live="polite">
+    <div>
+      <div class="label">English</div>
+      <p class="en" id="en">Tap Start, then answer out loud.</p>
+    </div>
+    <div>
+      <div class="label">Deutsch</div>
+      <p class="de hidden" id="de">···</p>
+    </div>
+    <div class="status" id="status">
+      <span class="pulse"></span>
+      <span class="status-text" id="statusText">Ready</span>
+    </div>
+    <div class="meter" id="meterWrap" hidden><b id="meterFill"></b><u id="meterThr"></u></div>
+    <p class="note" id="note" hidden></p>
+    <div class="choice" id="choice" hidden>
+      <button class="btn" id="btnRepeat">Repeat these</button>
+      <button class="btn primary" id="btnNext">Next</button>
+    </div>
+  </section>
+
+  <div class="transport">
+    <button class="t-small" id="btnBack" aria-label="Previous phrase">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg>
+    </button>
+    <button class="t-main" id="btnMain" aria-label="Start">
+      <svg viewBox="0 0 24 24" fill="currentColor" id="icoPlay"><path d="M7 4v16l13-8z"/></svg>
+      <svg viewBox="0 0 24 24" fill="currentColor" id="icoPause" hidden><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>
+    </button>
+    <button class="t-small" id="btnSkip" aria-label="Next phrase">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5l11 7L4 19z"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="sheet" id="sheetSettings" hidden>
+  <div class="sheet-in">
+    <div class="sheet-top"><h2>Settings</h2><button class="btn" id="closeSettings">Done</button></div>
+    <div class="scroll">
+      <div class="field">
+        <label for="sBatch">Phrases per round <output id="oBatch"></output></label>
+        <input type="range" id="sBatch" min="1" max="30" step="1">
+      </div>
+      <div class="field">
+        <label for="sRate">Speech speed <output id="oRate"></output></label>
+        <input type="range" id="sRate" min="0.5" max="1.2" step="0.05">
+      </div>
+      <div class="field">
+        <div class="toggle"><label for="sGate" style="flex:1">Ignore quiet background noise</label><input type="checkbox" id="sGate"></div>
+        <label for="sThr">Voice threshold <output id="oThr"></output></label>
+        <input type="range" id="sThr" min="0" max="100" step="1">
+        <p class="note">While the drill is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
+      </div>
+      <div class="field">
+        <div class="fl">Phrase table</div>
+        <p class="note" id="tableInfo"></p>
+        <div class="inline">
+          <input type="file" id="file" accept=".xlsx,.xls,.csv" style="flex:1">
+        </div>
+        <button class="btn" id="btnSwap">Swap English / German columns</button>
+        <button class="btn" id="btnReset">Use built-in table</button>
+        <p class="note" id="uploadMsg" hidden></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetList" hidden>
+  <div class="sheet-in">
+    <div class="sheet-top"><h2>Jump to phrase</h2><button class="btn" id="closeList">Close</button></div>
+    <div class="inline">
+      <input type="number" id="goto" min="1" inputmode="numeric" placeholder="Phrase number">
+      <button class="btn primary" id="btnGo">Go</button>
+    </div>
+    <input type="search" id="q" placeholder="Search English or German">
+    <div class="scroll" id="list"></div>
+  </div>
+</div>
+
+<script>
+const DEFAULT = [{"de": "Schönes Wochenende", "en": "Have a nice weekend"}, {"de": "Gleich falls", "en": "You too"}, {"de": "Eineinhalb", "en": "One and a half"}, {"de": "Musik gehört zu Bild \"f\"", "en": "Music belongs to picture \"f\""}, {"de": "Guten Morgen", "en": "Good morning"}, {"de": "Guten Abend", "en": "Good evening"}, {"de": "Gute Nacht", "en": "Good night"}, {"de": "Wo wohnst du?", "en": "Where do you live?"}, {"de": "Ich wohne in Greenville", "en": "I live in Greenville"}, {"de": "Woher kommst du?", "en": "Where do you come from?"}, {"de": "Ich komme aus Brasilien", "en": "I come from Brazil"}, {"de": "Was bist du von Beruf?", "en": "What's your job?"}, {"de": "Ich bin Ingenieur", "en": "I'm an engineer"}, {"de": "Has du Kinder?", "en": "Do you have kids?"}, {"de": "Ja, ich habe ein Kind", "en": "Yes, I have one child"}, {"de": "Nein, ich habe  keine Kinder", "en": "No, I have no children"}, {"de": "Wie alt bist du?", "en": "How old are you?"}, {"de": "Ich bin 36 jahre alt", "en": "I am 36 years old"}, {"de": "Wie ist deine Adresse?", "en": "What is your address?"}, {"de": "Meine Adresse ist…", "en": "My address is…"}, {"de": "Wie ist deine Postleitzahl?", "en": "What's your ZIP code?"}, {"de": "Mehr oder weniger", "en": "More or less"}, {"de": "Ich arbeite von zu Hause", "en": "I work from home"}, {"de": "Jeden Tag", "en": "Every day"}, {"de": "Gibt es ein Problem mit den Hausaufgabe?", "en": "Is there a problem with the homework?"}, {"de": "Noch einmal", "en": "One more time"}, {"de": "Welche Sprachen sprichst du?", "en": "Which languages do you speak?"}, {"de": "Wie geht es dir?", "en": "How are you?"}, {"de": "Mir geht es gut", "en": "I am good"}, {"de": "Wie viel kostet das?", "en": "How much does it cost?"}, {"de": "Na klar, gerne", "en": "Yes of course, gladly"}, {"de": "Kannst du das bitte schreiben?", "en": "Can you please write that down?"}, {"de": "Können Sie das bitte buchstabieren?", "en": "Could you please spell that?"}, {"de": "Kannst du das bitte wiederholen?", "en": "Could you please repeat that?"}, {"de": "Ich blieb zu Hause, weil ich müde war", "en": "I stayed at home because I was tired"}, {"de": "Sie hat schon die Fahrkarte gekauft", "en": "She has already bought the ticket"}, {"de": "Wir gehen morgen nach Berlin", "en": "We are going to Berlin tomorrow"}, {"de": "Er hat die Frage nicht verstanden", "en": "He did not understand the question"}, {"de": "Wir essen zu Hause Abendessen", "en": "We eat dinner at home"}, {"de": "Was ist dein Lieblingessen?", "en": "What is your favorite food?"}, {"de": "Welcher Tag ist heute?", "en": "Which day is today?"}, {"de": "Wie heisst das auf Deutsch?", "en": "How do you say that in German?"}, {"de": "Ich bin gerade in Deutschland", "en": "I'm currently in Germany"}, {"de": "Bist du gern Kino oder Restaurant?", "en": "Do you prefer cinema or restaurant?"}, {"de": "Ich bin noch da", "en": "I'm still here"}, {"de": "Er ist dann in Brandenburg", "en": "He is then in Brandenburg"}, {"de": "Ich habe ausserdem ein Auto", "en": "I also have a car"}, {"de": "Keine Änderung", "en": "No change"}, {"de": "Hier sind ein paar Fotos", "en": "Here are a few photos"}, {"de": "Er hat eine Erkältung", "en": "He has a cold."}, {"de": "Welche sprache spricht man in Deutschland?", "en": "What language is spoken in Germany?"}, {"de": "Die Hauptstadt ist Rom. Das Land ist Italien", "en": "The capital city is Rome. The country is Italy."}, {"de": "Warst du schon mal in Berlin?", "en": "Have you ever been to Berlin?"}, {"de": "Anna ist morgen wieder in Köln", "en": "Anna will be back in Köln tomorrow"}, {"de": "Ich war schon mal in Berlin", "en": "I have been to Berlin before"}, {"de": "Greenville liegt im Süden von USA", "en": "Greenville is located in the southern USA"}, {"de": "Greenville liegt nördlich von Florida", "en": "Greenville is located in northern Florida"}, {"de": "Ich bin zweisprachig", "en": "I am bilingual"}, {"de": "São Paulo liegt in Südosten von Brasilien", "en": "São Paulo is located in the southeastern Brazil"}, {"de": "möchtest du noch Tee?", "en": "Would you like some more tea?"}, {"de": "Und wer bezahlt das?", "en": "And who pays for that?"}, {"de": "Was möchtest du trinken?", "en": "What would you like to drink?"}, {"de": "Ich möchte Wasser trinken", "en": "I would like to drink water"}, {"de": "Wer ist das?", "en": "Who is that?"}, {"de": "welche Farbe gefällt dir?", "en": "Which color do you like?"}, {"de": "Mir gefällt rot", "en": "I like red"}, {"de": "Was machen wir heute Abend?", "en": "What are we doing tonight?"}, {"de": "Wie viele Birnen möchten Sie?", "en": "How many pears would you like?"}, {"de": "Wohin geht er?", "en": "Where is he going?"}, {"de": "Warum  kommst du zu spät?", "en": "Why are you late?"}, {"de": "Warum isst sie die Suppe nicht?", "en": "Why isn't she eating the soup?"}, {"de": "Weil sie ihr nicht schmeckt", "en": "Because she does not like it"}, {"de": "warum kommst du nicht zu meiner Party?", "en": "Why aren't you coming to my party?"}, {"de": "Mir ist langweilig", "en": "I'm bored"}, {"de": "Ich habe keine Lust", "en": "I don't feel like it"}, {"de": "Wir sind auf dem Sportplatz", "en": "We are on the sports field"}, {"de": "Ich habe den Apfel", "en": "I have the apple"}, {"de": "Gute reise", "en": "Have a good trip"}, {"de": "Er ist von Beruf IT-Manager", "en": "He is an IT manager by profession"}, {"de": "Ich habe den Bus versäumt", "en": "I missed the bus"}, {"de": "Wohin fahren wir in Urlaub?", "en": "Where are we going on holiday?"}, {"de": "Wir fahren nach Italien", "en": "We are going to Italy"}, {"de": "Welche Fragen hast du beantwortet?", "en": "Which questions did you answer?"}, {"de": "Helen und Alexis sind auf der Party", "en": "Helen and Alexis are at the party"}, {"de": "Vorgestern war Alex bei den Grosseltern", "en": "Alex was at his grandparents' house the day before yesterday"}, {"de": "Ihr Haus ist ziemlich alt", "en": "Her house is quite old"}, {"de": "Das Haus ist gemütlich", "en": "The house is cozy (comfortable)"}, {"de": "Unser Haus liegt sehr ruhig", "en": "Our house is in a very calm location"}, {"de": "macht ihr auch einen Deutschkurs?", "en": "Are you (plural) taking a German course as well?"}, {"de": "Sie kaufen meinen Kühlschrank und deinen Schreibtisch.", "en": "They buy my refrigerator and your desk."}, {"de": "Der Spiegel ist für den Flur", "en": "The mirror is for the hallway"}, {"de": "Meine fahrt dauert 25 minuten", "en": "My drive takes 25 minutes"}, {"de": "Man nennt sie Mitbewohner", "en": "They are called roommates"}, {"de": "Wohngemeinschaft hat zwei oder mehr Personen", "en": "A shared apartment have two or more people"}, {"de": "die Wohnung ist in der Nähe von der Universität", "en": "The apartment is near the university"}, {"de": "Petra kauft viele Sachen", "en": "Petra buys many things"}, {"de": "Sie wohnt seit 3 Monaten in Köln", "en": "She lives in Köln for 3 months"}, {"de": "Beachten Sie die Satzeichen", "en": "Pay attention to the punctuation"}, {"de": "das ist doch kein Kühlschrank, das ist ein Geschirrspüler", "en": "That's not a refrigerator, that's a dishwasher"}, {"de": "Ich habe solche Rückenschmerzen.", "en": "I have such bad back pain."}, {"de": "Mein Arzt sagt, ich solle jeden Morgen Gymnastik machen.", "en": "My doctor says I should do gymnastics every morning"}, {"de": "Und was hast du gestern gemacht?", "en": "And what did you do yesterday?"}, {"de": "Wir fangen um 21 Uhr an", "en": "We start at 9PM"}, {"de": "Es werden viele Leute da sein, die du auch kennst.", "en": "There will be many people there which you also know"}, {"de": "Ich mochte bitte eine Farhkarte nach Berlin kaufen", "en": "I would like to buy a ticket to Berlin, please"}, {"de": "Wann mochtest du reisen?", "en": "When would you like to travel?"}, {"de": "Has du einen Ausweis oder Reisepass mit dir?", "en": "Do you have an ID or a passport with you?"}, {"de": "Wie lange dauert die Reise?", "en": "How long does the trip last?"}, {"de": "Leider, ich habe keine Reservierung", "en": "Unfortunately, I don't have a reservation"}, {"de": "Hast du noch Fragen?", "en": "Do you have any more questions?"}, {"de": "Welches Auto fährst du?", "en": "Which car do you drive?"}, {"de": "Lies bitte die Beschreibungen", "en": "Please read the descriptions"}, {"de": "Er ist nicht mehr bei uns", "en": "He is no longer with us"}, {"de": "Da gibt es manchmal Streits", "en": "Sometimes there are arguments"}, {"de": "Deshalb müssen wir vielleicht alle bald nach Stuttgart umziehen", "en": "Therefore we must all maybe have to move to Stuttgart soon"}, {"de": "Ich gieße die Pflanzen", "en": "I'm watering the plants"}, {"de": "Es ist 9 Uhr 10", "en": "It is 9:10"}, {"de": "Es ist Viertel nach 9", "en": "It is 9:15"}, {"de": "Es ist Viertel vor 10", "en": "It is 9:45"}, {"de": "Es ist halb 9", "en": "It is 8:30"}, {"de": "Es ist Mitternacht", "en": "It is 00:00"}, {"de": "Um 10 Uhr", "en": "At 10 AM"}, {"de": "Am Dienstag", "en": "On Tuesday"}, {"de": "Im Januar", "en": "In January"}, {"de": "Von 10 Uhr bis 12 Uhr", "en": "From 10 to 12 PM"}, {"de": "Ab 10 Uhr", "en": "From (starts at) 10 AM"}, {"de": "Welches Fotos passen?", "en": "Which pictures fit?"}, {"de": "Zu Fuß", "en": "By foot"}, {"de": "Ich rufe meinen Freund an", "en": "I am calling my friend (on the phone)"}, {"de": "Ich muss meinen Freund anrufen", "en": "I must call my friend (on the phone)"}, {"de": "Ich hole sie vom Bahnhof ab", "en": "I pick her up from the train station"}, {"de": "der Junge zieht die Hose an", "en": "The boy puts on the trousers"}, {"de": "der Sportler wechselt seine Sportkleidung", "en": "The athlete changes his sportswear."}, {"de": "Warum ihr jetzt schon heim?", "en": "Why are you (plural) going home already?"}, {"de": "Herr Jacoby macht das Fenster auf", "en": "Mr. Jacoby opens the window"}, {"de": "Wir schliessen die Augen und schlafen ein", "en": "We close our eyes and fall asleep."}, {"de": "Das Kind wacht auf und weint.", "en": "The child wakes up and cries."}, {"de": "Thomas zündet eine Kerze an und betet.", "en": "Thomas lights a candle and prays."}, {"de": "er sucht eine Lösung. Er denkt nach", "en": "He is looking for a solution. He is thinking"}, {"de": "er räumt täglich sein Zimmer auf", "en": "He tidies up his room every day."}, {"de": "mein Sohn ist erst 2 Jahre alt", "en": "My son is only two years old."}, {"de": "Willi schreibt eine Bestellung auf.", "en": "Willi writes down an order."}, {"de": "Monika sieht am Abend nach dem Essen fern.", "en": "Monika watches TV in the evening after dinner."}, {"de": "Wie heißen die Wochentage?", "en": "What's the name of the weekdays?"}, {"de": "Lösen sie das Rätsel", "en": "Solve the puzzle."}, {"de": "der Zug hat fünf Minuten Verspätung", "en": "The train is five minutes late."}, {"de": "Die Tageszeit zwischen 9 Uhr und 12 Uhr ist der Vormittag", "en": "The time of day between 9 a.m. and 12 p.m. is the morning."}, {"de": "in der Nacht schlafe ich meistens", "en": "I usually sleep at night."}, {"de": "Zum Beispiel am Montagnachmittag", "en": "For example, on Monday afternoon."}, {"de": "was kann ich für Sie tun?", "en": "What can I do for you (formal)?"}, {"de": "ich hätte gern einen Termin", "en": "I would like to schedule an appointment."}, {"de": "Komm doch mit", "en": "Come with me"}, {"de": "wann gehst du?", "en": "when are you leaving?"}, {"de": "Wir hängen die Lampe an die Decke", "en": "We hang the lamp on the ceiling"}, {"de": "Der Anzug hängt an dem Haken", "en": "The suit is hanging on the hook."}, {"de": "kannst du bitte die Teller auf den Tisch stellen?", "en": "Could you please put the plates on the table?"}, {"de": "Wie ist das möglisch?", "en": "How is this possible?"}, {"de": "Betreve die Gäste", "en": "Support the guests"}, {"de": "Bist du sicher?", "en": "Are you sure?"}, {"de": "Ich muss heute nach Mittag mit meinem Chef sprechen", "en": "I must speak with my boss this afternoon."}, {"de": "der BMW ist teurer als der Toyota", "en": "the BMW is more expensive than the Toyota"}, {"de": "Ich arbeite als Lehrerin", "en": "I work as a teacher (female)"}, {"de": "ich mag meinen Chef meisteins", "en": "I usually like my boss"}, {"de": "wie komme ich zur Bank?", "en": "how do I get to the bank?"}, {"de": "das ist ziemlich weit", "en": "that is quite far"}, {"de": "an der Universität vorbei", "en": "past the university"}, {"de": "wann sind Sie geboren?", "en": "When were you born?"}, {"de": "es ist regnet", "en": "It is raining."}, {"de": "viele Leute sammeln sich vor der Kirche", "en": "Many people are gathering in front of the church."}, {"de": "die Turnhalle werden im nächsten Jahr neben der Schule gebaut", "en": "The gym will be built next to the school next year."}, {"de": "ich hänge die Plakate für Deutsch an die Wand", "en": "I am hanging the German posters on the wall."}, {"de": "Bitte stellen Sie die Schultasche unter den Tisch.", "en": "Please put the schoolbag under the table."}, {"de": "der Lehrer setzt sich an Lehrerpult", "en": "The teacher sits down at the teacher's desk."}, {"de": "die Schuschränke werden an die Wand angebracht", "en": "The shoe cabinets are being mounted on the wall."}, {"de": "wie komme ich zur Videothek?", "en": "How do I get to the video rental store?"}, {"de": "zuerst hier geradeaus bis zur Berliner Strasse, dort rechts", "en": "First, go straight ahead here to Berliner Strasse, then turn right."}, {"de": "Gehen Sie die Brachstrasse entlang bis zur Münchner Strasse", "en": "Walk along Brachstrasse to Münchner Strasse."}, {"de": "Heute ist der siebenundzwanzigste März", "en": "Today is the twenty-seventh of March"}, {"de": "Wir treffen uns am dreiundzwanzigsten April", "en": "We are meeting on April 23rd."}, {"de": "Du nimmst das Brot mit", "en": "You're taking the bread with you."}, {"de": "Dirk hatte keine Jacke, denn seine Jacke im Auto war.", "en": "Dirk didn't have a jacket, because his jacket was in the car."}, {"de": "Wir können Sie nicht verstehen", "en": "We cannot understand you."}, {"de": "Sie arbeiten, wo andere ihre Freizeit verbringen", "en": "They work where others spend their free time."}, {"de": "Bademeister stehen nicht nur cool am Beckenrand", "en": "Lifeguards don't just stand coolly by the poolside."}, {"de": "sie haben eine Ausbildung in Erste Hilfe", "en": "They have training in first aid."}, {"de": "Bademeister arbeiten oft in Frei und Hallenbädern, an Seen und am Strand", "en": "Lifeguards often work at outdoor and indoor pools, at lakes, and on the beach."}, {"de": "das weiss mein Chef", "en": "my boss knows that"}, {"de": "sie wohnen auf dem Land", "en": "they live in the countryside"}, {"de": "Es hat oft regenet", "en": "it has often rained"}, {"de": "die Touristen machen einen Stadt bummel", "en": "the tourists are taking a stroll through the city"}, {"de": "es ist lang und schmal", "en": "it is long and narrow"}, {"de": "in den Bergen kann man wandern", "en": "in the mountains one can hike"}, {"de": "es gibt fast immer Warteschlangen vor dem Schloss", "en": "there are almost always queues in front of the castle"}, {"de": "In Linz haben wir in einer Pension übernachtet", "en": "we have stayed in a guesthouse in Linz"}, {"de": "das Riesenrad im Prater haben wir schon angeschaut", "en": "we have already took a look at the Ferris wheel in"}, {"de": "wir haben Budapest erreicht", "en": "We have reached Budapest"}, {"de": "sie haben ein Fest gefiert", "en": "they have celebrated a festival"}, {"de": "die Blume hat gut gerochen", "en": "the flower has smelled good"}, {"de": "mein Mitarbeiter hat sein Bein gebrochen", "en": "my coworker has broken his leg"}, {"de": "Herr Brain ist ins Auto gestiegen", "en": "Mr. Brain has gotten into the car"}, {"de": "Anschliessend sind sie in ein Café in die Stadt gegangen", "en": "afterwards, they have gone to a café in the city"}, {"de": "Meine Eltern haben vor 15 Jahren geheiratet", "en": "My parents have been married 15 years ago"}, {"de": "Unser Chef hat eine grosse Veränderung angekündigt", "en": "Our boss has announced a major change"}, {"de": "Sie haben ein giftiges Gas eingeatmet", "en": "They have inhaled a toxic gas"}, {"de": "sie haben nicht angeklopft", "en": "They have not knocked"}, {"de": "Wir sind den halben Tag durch den Wald marschirt", "en": "We have marched through the forest for half the day"}, {"de": "Ich bin mit dem Flugzeug geflogen", "en": "I have flown by plane"}, {"de": "Hast du an das Handtuch gedacht?", "en": "Have you remembered the towel?"}, {"de": "Du hast ein Zimmer geputzt", "en": "You have cleaned a room"}, {"de": "Besonders gern fahren die Deutschen an die Ostsee", "en": "Germans particularly enjoy going to the Baltic Sea"}, {"de": "Viele Touristen entscheiden sich auch für Kroatien", "en": "Many tourists also choose Croatia"}, {"de": "Milch von Ziegen und Schafen", "en": "Milk from goats and sheep"}, {"de": "ich nehme ein Stuck Brod", "en": "I am taking a piece of bread"}, {"de": "ich bringe eine packung Fisches", "en": "I am bringing a package of fishes"}, {"de": "ich esse Fisch so gern", "en": "I really like eating fish"}, {"de": "In Berlin gibt es mehr Döner-Lokale als in Istanbul", "en": "There are more döner kebab shops in Berlin than in Istanbul"}, {"de": "Welches Gericht macht das Rennen?", "en": "Which dish comes out on top?"}, {"de": "Das Ergebnis überrascht nicht", "en": "The result is not surprising"}, {"de": "ich finde Fisch mit Reis schmeckt gut", "en": "I think fish with rice tastes good"}, {"de": "ich esse am liebsten Schokoladentorte", "en": "I eat chocolate cake the most"}, {"de": "ich esse lieber Currywurst als Fisch", "en": "I prefer eating currywurst to fish"}, {"de": "Er klettert einen gefährlichen Berg.", "en": "He is climbing a dangerous mountain."}, {"de": "mein netter Mitarbeiter hat ein blaues Auto", "en": "My nice colleague has a blue car."}, {"de": "Welches starke Kind trägt den schweren Koffer?", "en": "Which strong child is carrying the heavy suitcase?"}, {"de": "Welche Stiefel sind Grösse 39?", "en": "Which boots are size 39?"}, {"de": "trink ein grosses Glas Wasser!", "en": "Drink a large glass of water!"}, {"de": "Hier, nimm diesen Hustensaft", "en": "Here, take this cough syrup"}, {"de": "die Krawatte ist zu eng", "en": "The tie is too tight"}, {"de": "das Hals tut ihm weh", "en": "His throat hurts"}, {"de": "über dem Meeresspiegel", "en": "Above sea level"}, {"de": "mein Kopf tut weh", "en": "My head hurts"}, {"de": "Gute besserung", "en": "Get well soon"}, {"de": "Es ist teilweise bewölkt.", "en": "It is partly cloudy."}, {"de": "Die Feuchtigkeit ist hier hoch.", "en": "The humidity is high here."}, {"de": "der Bergsport ist nicht ungefährlich", "en": "Mountain sports are not without risk"}, {"de": "das finde ich blöd", "en": "I think that's stupid"}, {"de": "Dann have ich Zeit zum Nachdenken und Entspannen", "en": "Then I have time to think and relax"}, {"de": "Bodybuilder müssen auf ihre Ernährung achten", "en": "Bodybuilders have to watch their diet"}, {"de": "Frohe Weihnachten", "en": "Merry Christmas"}, {"de": "Frohe Ostern", "en": "Happy Easter"}, {"de": "Manche Feiertage haben lustige Traditionen", "en": "Some holidays have funny traditions"}, {"de": "Was genau feiern die Menschen?", "en": "What exactly are people celebrating?"}, {"de": "Ich glaube es nicht.", "en": "I don't believe it"}, {"de": "Eier in verschiedenen Farben", "en": "Eggs in various colors"}, {"de": "Ich habe mehrere Dinge", "en": "I have several things"}, {"de": "Man isst den Osterzopf pur", "en": "One eats the Easter braided bread plain"}, {"de": "Bei öffentlichen Veranstaltungen", "en": "At public events"}, {"de": "der Mond scheint sehr hell", "en": "the moon  shines very brightly"}, {"de": "die Sterne sind auch wunderschön", "en": "the starts are also very beautiful"}, {"de": "der Mond und dis Sterne leuchten uns", "en": "the moon and the stars light us"}, {"de": "wo bist du gewesen?", "en": "where have you been?"}, {"de": "wie freue ich mich auf mein Bettchen, wenn ich müde bin", "en": "How I love my little bed when I am tired"}, {"de": "Es ist so weiss, so weich und so nett", "en": "It is so white, and so soft, and so nice"}];
+
+const $ = id => document.getElementById(id);
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const S = Object.assign({ batch: 5, rate: 0.9, gate: true, thr: 25 }, lsGet('de.settings', {}));
+let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
+let rawRows = lsGet('de.raw', null);
+let swapped = lsGet('de.swapped', false);
+let pos = 0, batchStart = 0;
+{ const p = lsGet('de.pos', null); if (p && p.pos < phrases.length) { pos = p.pos; batchStart = Math.min(p.batchStart, pos); } }
+
+let runId = 0, running = false, phase = 'idle', micDenied = false;
+const cancelers = new Set();
+let currentFinish = null;
+
+/* ---------- speech out ---------- */
+function pickVoice(lang) {
+  const vs = speechSynthesis.getVoices();
+  const pref = lang.startsWith('de') ? /anna/i : /samantha/i;
+  return vs.find(v => v.lang === lang && pref.test(v.name)) || vs.find(v => v.lang === lang) ||
+    vs.find(v => v.lang.replace('_', '-').startsWith(lang.slice(0, 2))) || null;
+}
+function speak(text, lang) {
+  return new Promise(res => {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang; u.rate = S.rate;
+    const v = pickVoice(lang); if (v) u.voice = v;
+    let fin = false, t;
+    const done = () => { if (fin) return; fin = true; clearTimeout(t); cancelers.delete(done); res(); };
+    cancelers.add(done);
+    t = setTimeout(done, 4000 + text.length * 250 / S.rate);
+    u.onend = done; u.onerror = done;
+    speechSynthesis.speak(u);
+  });
+}
+
+/* ---------- mic level and noise gate ---------- */
+let stream = null, analyser = null, peak = 0, level = 0;
+async function initMic() {
+  if (stream || !S.gate || !navigator.mediaDevices) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true } });
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC(); const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    (function tick() {
+      analyser.getFloatTimeDomainData(buf);
+      let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+      level = Math.sqrt(s / buf.length); peak = Math.max(peak, level);
+      $('meterFill').style.width = Math.min(100, level / 0.15 * 100) + '%';
+      requestAnimationFrame(tick);
+    })();
+  } catch (e) { stream = null; analyser = null; }
+}
+const threshold = () => S.thr / 100 * 0.15;
+const gateOpen = () => !S.gate || !analyser || peak >= threshold();
+
+/* ---------- speech in ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const RE_REPEAT = /repeat|again|wiederhol|nochmal|noch mal/i;
+const RE_NEXT = /next|continue|weiter|n[aä]chst/i;
+const hasWords = t => t.replace(/[^\p{L}\p{N}]/gu, '').length >= 2;
+const acceptSpeech = t => hasWords(t) ? t : null;
+const acceptCmd = t => RE_REPEAT.test(t) ? 'repeat' : RE_NEXT.test(t) ? 'next' : null;
+
+function listen(lang, accept) {
+  return new Promise(res => {
+    let done = false, rec = null, timer = null;
+    const finish = v => {
+      if (done) return; done = true; clearTimeout(timer);
+      if (rec) { rec.onend = rec.onerror = rec.onresult = null; try { rec.abort(); } catch (e) {} }
+      cancelers.delete(cancel); currentFinish = null; res(v);
+    };
+    const cancel = () => finish(null);
+    cancelers.add(cancel); currentFinish = finish;
+    const begin = () => {
+      if (done || micDenied || !SR) return;
+      rec = new SR(); rec.lang = lang; rec.interimResults = false; rec.maxAlternatives = 1;
+      rec.onstart = () => { peak = 0; };
+      rec.onresult = e => {
+        const r = e.results[e.results.length - 1];
+        if (!r.isFinal || !gateOpen()) return;
+        const v = accept(r[0].transcript.trim());
+        if (v) finish(v);
+      };
+      rec.onerror = e => {
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { micDenied = true; render(); }
+      };
+      rec.onend = () => { if (!done) timer = setTimeout(begin, 250); };
+      try { rec.start(); } catch (e) { timer = setTimeout(begin, 500); }
+    };
+    begin();
+  });
+}
+
+/* ---------- drill loop ---------- */
+function setPhase(p) { phase = p; render(); }
+function savePos() { lsSet('de.pos', { pos, batchStart }); }
+
+async function loop(tok) {
+  const alive = () => tok === runId;
+  while (alive()) {
+    const end = Math.min(batchStart + S.batch, phrases.length);
+    while (pos < end) {
+      savePos();
+      setPhase('en');
+      await speak(phrases[pos].en, 'en-US'); if (!alive()) return;
+      await sleep(300); if (!alive()) return;
+      setPhase('listen');
+      await listen('de-DE', acceptSpeech); if (!alive()) return;
+      setPhase('de');
+      await speak(phrases[pos].de, 'de-DE'); if (!alive()) return;
+      await sleep(400); if (!alive()) return;
+      pos++;
+    }
+    const last = end >= phrases.length;
+    setPhase('prompt');
+    const n = end - batchStart;
+    await speak(last
+      ? `That was the last round. Say repeat to practice these ${n} again, or next to start from the beginning.`
+      : `Say repeat to practice these ${n} again, or next to continue.`, 'en-US');
+    if (!alive()) return;
+    await sleep(300); if (!alive()) return;
+    const cmd = await listen('en-US', acceptCmd); if (!alive()) return;
+    if (cmd === 'repeat') { pos = batchStart; }
+    else { batchStart = last ? 0 : end; pos = batchStart; }
+  }
+}
+
+function stopAll() {
+  runId++; running = false;
+  try { speechSynthesis.cancel(); } catch (e) {}
+  [...cancelers].forEach(f => f()); cancelers.clear();
+}
+let wake = null;
+async function start() {
+  try { const u = new SpeechSynthesisUtterance(''); speechSynthesis.speak(u); } catch (e) {}
+  try { wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+  await initMic();
+  stopAll(); running = true;
+  loop(runId);
+}
+function pause() { stopAll(); if (wake) { try { wake.release(); } catch (e) {} wake = null; } setPhase('paused'); }
+function moveTo(i, startIt) {
+  const was = running;
+  stopAll();
+  pos = Math.max(0, Math.min(phrases.length - 1, i));
+  if (pos < batchStart || pos >= batchStart + S.batch) batchStart = pos;
+  savePos(); setPhase(was || startIt ? 'idle' : 'paused');
+  if (was || startIt) start();
+}
+function jumpTo(i) { batchStart = Math.max(0, Math.min(phrases.length - 1, i)); moveTo(i, true); }
+
+/* ---------- rendering ---------- */
+function render() {
+  const p = phrases[pos];
+  const end = Math.min(batchStart + S.batch, phrases.length);
+  $('count').textContent = (pos + 1) + ' / ' + phrases.length;
+  const dots = $('dots'); dots.textContent = '';
+  for (let i = batchStart; i < end; i++) {
+    const d = document.createElement('i');
+    d.className = i < pos || (i === pos && phase === 'de') ? 'done' : i === pos ? 'now' : '';
+    dots.appendChild(d);
+  }
+  $('en').textContent = phase === 'prompt' ? 'Round finished' : (phase === 'idle' && !running ? 'Tap Start, then answer out loud.' : p.en);
+  const showDe = phase === 'de';
+  $('de').textContent = phase === 'prompt' ? '' : (showDe ? p.de : '···');
+  $('de').classList.toggle('hidden', !showDe);
+  const texts = {
+    idle: 'Ready', en: 'Listen to the English', listen: micDenied || !SR ? 'Say it, then tap the card' : 'Your turn: say it in German',
+    de: 'Correct German', prompt: micDenied || !SR ? 'Choose below' : 'Say “repeat” or “next”', paused: 'Paused'
+  };
+  $('statusText').textContent = texts[phase];
+  const st = $('status');
+  st.className = 'status' + (phase === 'listen' || phase === 'prompt' ? ' listening' : phase === 'en' || phase === 'de' ? ' speaking' : '');
+  $('choice').hidden = phase !== 'prompt';
+  $('card').classList.toggle('tappable', phase === 'listen' && (micDenied || !SR));
+  const note = $('note');
+  if (micDenied) { note.hidden = false; note.textContent = 'Microphone access is blocked here, so voice detection is off. Tap the card after you speak.'; }
+  else if (!SR) { note.hidden = false; note.textContent = 'This browser has no speech recognition. Tap the card after you speak.'; }
+  else note.hidden = true;
+  $('meterWrap').hidden = !(S.gate && analyser && (phase === 'listen' || phase === 'prompt'));
+  $('meterThr').style.left = Math.min(100, threshold() / 0.15 * 100) + '%';
+  $('icoPlay').hidden = running; $('icoPause').hidden = !running;
+  $('btnMain').setAttribute('aria-label', running ? 'Pause' : 'Start');
+}
+
+/* ---------- list / jump ---------- */
+function renderList() {
+  const q = $('q').value.trim().toLowerCase();
+  const list = $('list'); list.textContent = '';
+  const frag = document.createDocumentFragment();
+  phrases.forEach((p, i) => {
+    if (q && !(p.en + ' ' + p.de).toLowerCase().includes(q)) return;
+    const b = document.createElement('button');
+    b.className = 'row' + (i === pos ? ' cur' : '');
+    const n = document.createElement('div'); n.className = 'n'; n.textContent = i + 1;
+    const t = document.createElement('div'); t.className = 't'; t.textContent = p.en;
+    const s = document.createElement('span'); s.textContent = p.de; t.appendChild(s);
+    b.append(n, t);
+    b.onclick = () => { $('sheetList').hidden = true; jumpTo(i); };
+    frag.appendChild(b);
+  });
+  list.appendChild(frag);
+}
+
+/* ---------- table loading ---------- */
+const DE_WORDS = new Set('ich du er sie es wir ihr ist sind bin bist habe hast hat haben der die das ein eine und nicht mit von zu auf im den dem wo wie was wer ja nein bitte danke guten gute morgen abend nacht mein dein wohne heiße heisse komme kommt aus ob wann warum wieviel'.split(' '));
+function deScore(rows, c) {
+  let s = 0;
+  for (const r of rows) {
+    const t = String(r[c] ?? '').toLowerCase();
+    s += (t.match(/[äöüß]/g) || []).length * 2;
+    for (const w of t.split(/[^\p{L}]+/u)) if (DE_WORDS.has(w)) s++;
+  }
+  return s;
+}
+function buildPairs(rows, swap) {
+  const out = [];
+  for (const r of rows) {
+    const a = String(r[0] ?? '').trim(), b = String(r[1] ?? '').trim();
+    if (!a || !b) continue;
+    out.push(swap ? { de: b, en: a } : { de: a, en: b });
+  }
+  return out;
+}
+function applyTable(pairs, rows, sw) {
+  phrases = pairs; rawRows = rows; swapped = sw;
+  lsSet('de.phrases', rows ? pairs : null); lsSet('de.raw', rows); lsSet('de.swapped', sw);
+  stopAll(); pos = 0; batchStart = 0; savePos(); phase = 'idle'; render(); tableInfo();
+}
+function tableInfo() {
+  $('tableInfo').textContent = phrases.length + ' phrases loaded' + (rawRows ? ' from your uploaded table.' : ' from the built-in table (texts.xlsx).') +
+    ' Column A = ' + (swapped ? 'English' : 'German') + ', column B = ' + (swapped ? 'German' : 'English') + '.';
+}
+$('file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const msg = $('uploadMsg'); msg.hidden = false;
+  try {
+    if (!window.XLSX) throw new Error('The spreadsheet reader did not load. Check your connection and try again.');
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+    const complete = rows.filter(r => String(r[0] ?? '').trim() && String(r[1] ?? '').trim());
+    if (!complete.length) throw new Error('No rows with text in both of the first two columns.');
+    const sw = deScore(complete, 1) > deScore(complete, 0);
+    const pairs = buildPairs(rows, sw);
+    applyTable(pairs, rows, sw);
+    msg.textContent = 'Loaded ' + pairs.length + ' phrases. If English and German are the wrong way round, use the swap button.';
+  } catch (err) { msg.textContent = String(err.message || err); }
+  e.target.value = '';
+};
+$('btnSwap').onclick = () => { if (rawRows) applyTable(buildPairs(rawRows, !swapped), rawRows, !swapped); else applyTable(DEFAULT.map(p => ({ de: p.en, en: p.de })), null, true); };
+$('btnReset').onclick = () => applyTable(DEFAULT.slice(), null, false);
+
+/* ---------- wiring ---------- */
+$('btnMain').onclick = () => running ? pause() : start();
+$('btnBack').onclick = () => moveTo(pos - 1);
+$('btnSkip').onclick = () => moveTo(pos + 1);
+$('card').onclick = () => { if (phase === 'listen' && currentFinish) currentFinish('tap'); };
+$('btnRepeat').onclick = () => currentFinish && currentFinish('repeat');
+$('btnNext').onclick = () => currentFinish && currentFinish('next');
+
+$('btnSettings').onclick = () => { tableInfo(); $('sheetSettings').hidden = false; };
+$('closeSettings').onclick = () => { $('sheetSettings').hidden = true; render(); };
+$('btnList').onclick = () => { $('q').value = ''; renderList(); $('goto').max = phrases.length; $('sheetList').hidden = false; };
+$('closeList').onclick = () => { $('sheetList').hidden = true; };
+$('q').oninput = renderList;
+const go = () => { const n = parseInt($('goto').value, 10); if (n >= 1 && n <= phrases.length) { $('sheetList').hidden = true; jumpTo(n - 1); } };
+$('btnGo').onclick = go;
+$('goto').onkeydown = e => { if (e.key === 'Enter') go(); };
+
+function bindSetting(id, key, out, fmt, conv) {
+  const el = $(id);
+  el.value = S[key]; if (out) $(out).textContent = fmt(S[key]);
+  el.oninput = () => { S[key] = conv(el.value); if (out) $(out).textContent = fmt(S[key]); lsSet('de.settings', S); };
+}
+bindSetting('sBatch', 'batch', 'oBatch', v => v, v => parseInt(v, 10));
+bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(v));
+bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
+$('sGate').checked = S.gate;
+$('sGate').onchange = () => { S.gate = $('sGate').checked; lsSet('de.settings', S); };
+
+if (window.speechSynthesis) speechSynthesis.getVoices();
+render(); tableInfo();
+</script>
+
+</body></html>
