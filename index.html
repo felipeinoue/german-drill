@@ -78,6 +78,7 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 @media (prefers-reduced-motion: reduce) { .listening .pulse { animation: none; box-shadow: 0 0 0 6px var(--ring); } }
 .status-text { font-weight: 500; }
 .note { font-size: 13px; color: var(--muted); margin: 0; }
+.diag { font: 500 11px/1.4 var(--f-mono); overflow-wrap: anywhere; }
 
 .meter { height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
 .meter b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ok); transition: width 60ms linear; }
@@ -145,6 +146,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     </div>
     <div class="meter" id="meterWrap" hidden><b id="meterFill"></b><u id="meterThr"></u></div>
     <p class="note" id="note" hidden></p>
+    <p class="note diag" id="diag" hidden></p>
     <div class="choice" id="choice" hidden>
       <button class="btn" id="btnRepeat">Repeat these</button>
       <button class="btn primary" id="btnNext">Next</button>
@@ -178,10 +180,11 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <input type="range" id="sRate" min="0.5" max="1.2" step="0.05">
       </div>
       <div class="field">
-        <div class="toggle"><label for="sGate" style="flex:1">Ignore quiet background noise</label><input type="checkbox" id="sGate"></div>
         <label for="sThr">Voice threshold <output id="oThr"></output></label>
         <input type="range" id="sThr" min="0" max="100" step="1">
-        <p class="note">While the drill is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
+        <p class="note">The app moves on when you speak for about half a second and then stop. While it is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
+        <div class="toggle"><label for="sGate" style="flex:1">Also require the threshold for speech recognition</label><input type="checkbox" id="sGate"></div>
+        <div class="toggle"><label for="sDiag" style="flex:1">Show mic diagnostics</label><input type="checkbox" id="sDiag"></div>
       </div>
       <div class="field">
         <div class="fl">Phrase table</div>
@@ -217,7 +220,8 @@ const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JS
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: true, thr: 25 }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true }, lsGet('de.settings', {}));
+if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
@@ -252,24 +256,44 @@ function speak(text, lang) {
 /* ---------- mic level and noise gate ---------- */
 let stream = null, analyser = null, peak = 0, level = 0;
 async function initMic() {
-  if (stream || !S.gate || !navigator.mediaDevices) return;
+  if (stream || !navigator.mediaDevices) return;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true } });
     const AC = window.AudioContext || window.webkitAudioContext;
     const ctx = new AC(); const src = ctx.createMediaStreamSource(stream);
     analyser = ctx.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
     const buf = new Float32Array(analyser.fftSize);
-    (function tick() {
+    let last = performance.now();
+    (function tick(now) {
+      now = now || performance.now();
+      const dt = Math.min(200, now - last); last = now;
       analyser.getFloatTimeDomainData(buf);
       let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
       level = Math.sqrt(s / buf.length); peak = Math.max(peak, level);
+      if (vadOn && level >= threshold()) { vadVoiced += dt; vadLastVoice = now; }
       $('meterFill').style.width = Math.min(100, level / 0.15 * 100) + '%';
+      if (S.diag) diagUpdate();
       requestAnimationFrame(tick);
     })();
-  } catch (e) { stream = null; analyser = null; }
+  } catch (e) { stream = null; analyser = null; diag.err = 'mic: ' + (e.name || e); }
 }
 const threshold = () => S.thr / 100 * 0.15;
 const gateOpen = () => !S.gate || !analyser || peak >= threshold();
+
+/* Voice activity: counts time above the threshold; an utterance is >= 350 ms of voice followed by >= 900 ms of quiet. */
+let vadOn = false, vadVoiced = 0, vadLastVoice = 0;
+function vadArm() { vadVoiced = 0; vadLastVoice = 0; vadOn = !!analyser; }
+const vadDone = () => vadOn && vadVoiced >= 350 && performance.now() - vadLastVoice >= 900;
+const vadStarted = () => vadOn && vadVoiced > 0;
+
+const diag = { rec: SRok() ? 'idle' : 'none', heard: '', err: '', restarts: 0 };
+function SRok() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function diagUpdate() {
+  const el = $('diag'); if (!el) return;
+  el.textContent = 'mic ' + (analyser ? 'on' : 'off') + ' lvl ' + level.toFixed(3) + '/' + threshold().toFixed(3) +
+    ' voiced ' + Math.round(vadVoiced) + 'ms | rec ' + diag.rec + (diag.heard ? ' "' + diag.heard + '"' : '') +
+    (diag.err ? ' err ' + diag.err : '') + ' r' + diag.restarts;
+}
 
 /* ---------- speech in ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -279,35 +303,53 @@ const hasWords = t => t.replace(/[^\p{L}\p{N}]/gu, '').length >= 2;
 const acceptSpeech = t => hasWords(t) ? t : null;
 const acceptCmd = t => RE_REPEAT.test(t) ? 'repeat' : RE_NEXT.test(t) ? 'next' : null;
 
-function listen(lang, accept) {
+/* Waits for the user to speak. Two detectors race: the volume-based voice detector (works on every phone browser)
+   and speech recognition (when the browser has it). o.vadValue is what the voice detector resolves with;
+   o.vadGrace waits that long for recognition to name a command first; o.immediate skips the end-of-speech debounce;
+   o.silenceMs/o.silenceValue resolve after that long with no speech at all. */
+function listen(lang, accept, o = {}) {
   return new Promise(res => {
-    let done = false, rec = null, timer = null;
+    let done = false, rec = null, timer = null, deb = null, poll = null, vadHit = 0;
+    const t0 = performance.now();
     const finish = v => {
-      if (done) return; done = true; clearTimeout(timer);
+      if (done) return; done = true; clearTimeout(timer); clearTimeout(deb); clearInterval(poll);
       if (rec) { rec.onend = rec.onerror = rec.onresult = null; try { rec.abort(); } catch (e) {} }
+      vadOn = false; diag.rec = SR ? 'idle' : 'none';
       cancelers.delete(cancel); currentFinish = null; res(v);
     };
     const cancel = () => finish(null);
     cancelers.add(cancel); currentFinish = finish;
+    peak = 0; vadArm();
+    poll = setInterval(() => {
+      if (done) return;
+      const now = performance.now();
+      if (!vadHit && vadDone()) vadHit = now;
+      if (vadHit && now - vadHit >= (o.vadGrace || 0)) return finish(o.vadValue ?? 'voice');
+      if (o.silenceMs && !vadHit && !vadStarted() && now - t0 >= o.silenceMs) finish(o.silenceValue);
+    }, 100);
     const begin = () => {
       if (done || micDenied || !SR) return;
-      rec = new SR(); rec.lang = lang; rec.interimResults = false; rec.maxAlternatives = 1;
-      rec.onstart = () => { peak = 0; };
+      rec = new SR(); rec.lang = lang; rec.interimResults = true; rec.maxAlternatives = 1;
+      rec.onstart = () => { diag.rec = 'listening'; };
       rec.onresult = e => {
         const r = e.results[e.results.length - 1];
-        if (!r.isFinal || !gateOpen()) return;
-        const v = accept(r[0].transcript.trim());
-        if (v) finish(v);
+        const t = r[0].transcript.trim(); diag.heard = t.slice(0, 24);
+        if (!gateOpen()) return;
+        const v = accept(t); if (!v) return;
+        clearTimeout(deb);
+        if (r.isFinal || o.immediate) finish(v); else deb = setTimeout(() => finish(v), 900);
       };
       rec.onerror = e => {
+        diag.err = e.error;
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { micDenied = true; render(); }
       };
-      rec.onend = () => { if (!done) timer = setTimeout(begin, 250); };
-      try { rec.start(); } catch (e) { timer = setTimeout(begin, 500); }
+      rec.onend = () => { if (!done) { diag.rec = 'restart'; diag.restarts++; timer = setTimeout(begin, 250); } };
+      try { rec.start(); } catch (e) { diag.err = String(e.name || e); timer = setTimeout(begin, 500); }
     };
     begin();
   });
 }
+const canHear = () => !!analyser || (!!SR && !micDenied);
 
 /* ---------- drill loop ---------- */
 function setPhase(p) { phase = p; render(); }
@@ -323,7 +365,7 @@ async function loop(tok) {
       await speak(phrases[pos].en, 'en-US'); if (!alive()) return;
       await sleep(300); if (!alive()) return;
       setPhase('listen');
-      await listen('de-DE', acceptSpeech); if (!alive()) return;
+      await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
       await speak(phrases[pos].de, 'de-DE'); if (!alive()) return;
       await sleep(400); if (!alive()) return;
@@ -333,11 +375,12 @@ async function loop(tok) {
     setPhase('prompt');
     const n = end - batchStart;
     await speak(last
-      ? `That was the last round. Say repeat to practice these ${n} again, or next to start from the beginning.`
-      : `Say repeat to practice these ${n} again, or next to continue.`, 'en-US');
+      ? `That was the last round. Say next to start from the beginning, or stay quiet to repeat these ${n}.`
+      : `Say next to continue, or stay quiet to repeat these ${n}.`, 'en-US');
     if (!alive()) return;
     await sleep(300); if (!alive()) return;
-    const cmd = await listen('en-US', acceptCmd); if (!alive()) return;
+    const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 1500, immediate: true, silenceMs: 6000, silenceValue: 'repeat' });
+    if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
     else { batchStart = last ? 0 : end; pos = batchStart; }
   }
@@ -383,19 +426,19 @@ function render() {
   $('de').textContent = phase === 'prompt' ? '' : (showDe ? p.de : '···');
   $('de').classList.toggle('hidden', !showDe);
   const texts = {
-    idle: 'Ready', en: 'Listen to the English', listen: micDenied || !SR ? 'Say it, then tap the card' : 'Your turn: say it in German',
-    de: 'Correct German', prompt: micDenied || !SR ? 'Choose below' : 'Say “repeat” or “next”', paused: 'Paused'
+    idle: 'Ready', en: 'Listen to the English', listen: !canHear() ? 'Say it, then tap the card' : 'Your turn: say it in German',
+    de: 'Correct German', prompt: !canHear() ? 'Choose below' : 'Say “next”, or stay quiet to repeat', paused: 'Paused'
   };
   $('statusText').textContent = texts[phase];
   const st = $('status');
   st.className = 'status' + (phase === 'listen' || phase === 'prompt' ? ' listening' : phase === 'en' || phase === 'de' ? ' speaking' : '');
   $('choice').hidden = phase !== 'prompt';
-  $('card').classList.toggle('tappable', phase === 'listen' && (micDenied || !SR));
+  $('card').classList.toggle('tappable', phase === 'listen' && !canHear());
   const note = $('note');
-  if (micDenied) { note.hidden = false; note.textContent = 'Microphone access is blocked here, so voice detection is off. Tap the card after you speak.'; }
-  else if (!SR) { note.hidden = false; note.textContent = 'This browser has no speech recognition. Tap the card after you speak.'; }
+  if (!canHear() && phase !== 'idle') { note.hidden = false; note.textContent = 'The microphone is not available here, so voice detection is off. Tap the card after you speak.'; }
   else note.hidden = true;
-  $('meterWrap').hidden = !(S.gate && analyser && (phase === 'listen' || phase === 'prompt'));
+  $('diag').hidden = !S.diag;
+  $('meterWrap').hidden = !(analyser && (phase === 'listen' || phase === 'prompt'));
   $('meterThr').style.left = Math.min(100, threshold() / 0.15 * 100) + '%';
   $('icoPlay').hidden = running; $('icoPause').hidden = !running;
   $('btnMain').setAttribute('aria-label', running ? 'Pause' : 'Start');
@@ -495,6 +538,8 @@ bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(
 bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
 $('sGate').checked = S.gate;
 $('sGate').onchange = () => { S.gate = $('sGate').checked; lsSet('de.settings', S); };
+$('sDiag').checked = S.diag;
+$('sDiag').onchange = () => { S.diag = $('sDiag').checked; lsSet('de.settings', S); render(); };
 
 if (window.speechSynthesis) speechSynthesis.getVoices();
 render(); tableInfo();
