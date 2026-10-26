@@ -367,7 +367,7 @@ async function loop(tok) {
       setPhase('de');
       await speak(phrases[pos].de, 'de-DE'); if (!alive()) return;
       await sleep(400); if (!alive()) return;
-      pos++;
+      pos++; savePos();
     }
     const last = end >= phrases.length;
     setPhase('prompt');
@@ -378,6 +378,7 @@ async function loop(tok) {
     if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
     else { batchStart = last ? 0 : end; pos = batchStart; }
+    savePos();
   }
 }
 
@@ -416,7 +417,7 @@ function render() {
     d.className = i < pos || (i === pos && phase === 'de') ? 'done' : i === pos ? 'now' : '';
     dots.appendChild(d);
   }
-  $('en').textContent = phase === 'prompt' ? 'Round finished' : (phase === 'idle' && !running ? 'Tap Start, then answer out loud.' : p.en);
+  $('en').textContent = phase === 'prompt' ? 'Round finished' : (phase === 'idle' && !running ? (pos > 0 ? 'Welcome back. Tap Start to continue from phrase ' + (pos + 1) + '.' : 'Tap Start, then answer out loud.') : p.en);
   const showDe = phase === 'de';
   $('de').textContent = phase === 'prompt' ? '' : (showDe ? p.de : '···');
   $('de').classList.toggle('hidden', !showDe);
