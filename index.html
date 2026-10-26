@@ -176,6 +176,11 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <input type="range" id="sBatch" min="1" max="30" step="1">
       </div>
       <div class="field">
+        <label for="sPause">Pause before moving on <output id="oPause"></output></label>
+        <input type="range" id="sPause" min="0.5" max="5" step="0.25">
+        <p class="note">How long you must stay quiet before the app says the German. Raise it if it cuts you off.</p>
+      </div>
+      <div class="field">
         <label for="sRate">Speech speed <output id="oRate"></output></label>
         <input type="range" id="sRate" min="0.5" max="1.2" step="0.05">
       </div>
@@ -220,7 +225,7 @@ const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JS
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 2 }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
@@ -283,7 +288,7 @@ const gateOpen = () => !S.gate || !analyser || peak >= threshold();
 /* Voice activity: counts time above the threshold; an utterance is >= 350 ms of voice followed by >= 900 ms of quiet. */
 let vadOn = false, vadVoiced = 0, vadLastVoice = 0;
 function vadArm() { vadVoiced = 0; vadLastVoice = 0; vadOn = !!analyser; }
-const vadDone = () => vadOn && vadVoiced >= 350 && performance.now() - vadLastVoice >= 900;
+const vadDone = () => vadOn && vadVoiced >= 350 && performance.now() - vadLastVoice >= S.endPause * 1000;
 const vadStarted = () => vadOn && vadVoiced > 0;
 
 const diag = { rec: SRok() ? 'idle' : 'none', heard: '', err: '', restarts: 0 };
@@ -335,7 +340,14 @@ function listen(lang, accept, o = {}) {
         if (!gateOpen()) return;
         const v = accept(t); if (!v) return;
         clearTimeout(deb);
-        if (r.isFinal || o.immediate) finish(v); else deb = setTimeout(() => finish(v), 900);
+        if (o.immediate) return finish(v);
+        /* Words were heard: finish only once the user has been quiet for the whole end pause. */
+        const check = () => {
+          const quietFor = analyser && vadLastVoice ? performance.now() - vadLastVoice : Infinity;
+          if (quietFor >= S.endPause * 1000) finish(v);
+          else deb = setTimeout(check, S.endPause * 1000 - quietFor + 50);
+        };
+        deb = setTimeout(check, S.endPause * 1000);
       };
       rec.onerror = e => {
         diag.err = e.error;
@@ -530,6 +542,7 @@ function bindSetting(id, key, out, fmt, conv) {
   el.oninput = () => { S[key] = conv(el.value); if (out) $(out).textContent = fmt(S[key]); lsSet('de.settings', S); };
 }
 bindSetting('sBatch', 'batch', 'oBatch', v => v, v => parseInt(v, 10));
+bindSetting('sPause', 'endPause', 'oPause', v => v.toFixed(2).replace(/0$/, '') + ' s', v => parseFloat(v));
 bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(v));
 bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
 $('sGate').checked = S.gate;
