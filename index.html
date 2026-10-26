@@ -285,7 +285,7 @@ async function initMic() {
 const threshold = () => S.thr / 100 * 0.15;
 const gateOpen = () => !S.gate || !analyser || peak >= threshold();
 
-/* Voice activity: counts time above the threshold; an utterance is >= 350 ms of voice followed by >= 900 ms of quiet. */
+/* Voice activity: counts time above the threshold; an utterance is >= 350 ms of voice followed by the end pause (S.endPause) of quiet. */
 let vadOn = false, vadVoiced = 0, vadLastVoice = 0;
 function vadArm() { vadVoiced = 0; vadLastVoice = 0; vadOn = !!analyser; }
 const vadDone = () => vadOn && vadVoiced >= 350 && performance.now() - vadLastVoice >= S.endPause * 1000;
