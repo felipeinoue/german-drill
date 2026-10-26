@@ -149,7 +149,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     <p class="note diag" id="diag" hidden></p>
     <div class="choice" id="choice" hidden>
       <button class="btn" id="btnRepeat">Repeat these</button>
-      <button class="btn primary" id="btnNext">Next</button>
+      <button class="btn primary" id="btnNext">Continue</button>
     </div>
   </section>
 
@@ -305,12 +305,11 @@ const acceptCmd = t => RE_REPEAT.test(t) ? 'repeat' : RE_NEXT.test(t) ? 'next' :
 
 /* Waits for the user to speak. Two detectors race: the volume-based voice detector (works on every phone browser)
    and speech recognition (when the browser has it). o.vadValue is what the voice detector resolves with;
-   o.vadGrace waits that long for recognition to name a command first; o.immediate skips the end-of-speech debounce;
-   o.silenceMs/o.silenceValue resolve after that long with no speech at all. */
+   o.vadGrace waits that long for recognition to name a command first; o.immediate skips the end-of-speech debounce.
+   There is no timeout: it waits until the user speaks. */
 function listen(lang, accept, o = {}) {
   return new Promise(res => {
     let done = false, rec = null, timer = null, deb = null, poll = null, vadHit = 0;
-    const t0 = performance.now();
     const finish = v => {
       if (done) return; done = true; clearTimeout(timer); clearTimeout(deb); clearInterval(poll);
       if (rec) { rec.onend = rec.onerror = rec.onresult = null; try { rec.abort(); } catch (e) {} }
@@ -325,7 +324,6 @@ function listen(lang, accept, o = {}) {
       const now = performance.now();
       if (!vadHit && vadDone()) vadHit = now;
       if (vadHit && now - vadHit >= (o.vadGrace || 0)) return finish(o.vadValue ?? 'voice');
-      if (o.silenceMs && !vadHit && !vadStarted() && now - t0 >= o.silenceMs) finish(o.silenceValue);
     }, 100);
     const begin = () => {
       if (done || micDenied || !SR) return;
@@ -373,13 +371,10 @@ async function loop(tok) {
     }
     const last = end >= phrases.length;
     setPhase('prompt');
-    const n = end - batchStart;
-    await speak(last
-      ? `That was the last round. Say next to start from the beginning, or stay quiet to repeat these ${n}.`
-      : `Say next to continue, or stay quiet to repeat these ${n}.`, 'en-US');
+    await speak('Round finished, repeat or continue?', 'en-US');
     if (!alive()) return;
     await sleep(300); if (!alive()) return;
-    const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 1500, immediate: true, silenceMs: 6000, silenceValue: 'repeat' });
+    const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 2000, immediate: true });
     if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
     else { batchStart = last ? 0 : end; pos = batchStart; }
@@ -427,7 +422,7 @@ function render() {
   $('de').classList.toggle('hidden', !showDe);
   const texts = {
     idle: 'Ready', en: 'Listen to the English', listen: !canHear() ? 'Say it, then tap the card' : 'Your turn: say it in German',
-    de: 'Correct German', prompt: !canHear() ? 'Choose below' : 'Say “next”, or stay quiet to repeat', paused: 'Paused'
+    de: 'Correct German', prompt: !canHear() ? 'Choose below' : 'Say “repeat” or “continue”', paused: 'Paused'
   };
   $('statusText').textContent = texts[phase];
   const st = $('status');
