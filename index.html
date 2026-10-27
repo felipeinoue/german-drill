@@ -209,7 +209,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <input type="range" id="sThr" min="0" max="100" step="1">
         <p class="note">The app moves on when you speak for about half a second and then stop. While it is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
         <div class="toggle"><label for="sGate" style="flex:1">Also require the threshold for speech recognition</label><input type="checkbox" id="sGate"></div>
-        <div class="toggle"><label for="sCar" style="flex:1">Car / Bluetooth audio: turn the mic off while the app speaks</label><input type="checkbox" id="sCar"></div>
+        <div class="toggle"><label for="sCar" style="flex:1">Car / Bluetooth audio: turn the mic off while the app speaks (Chrome shows a mic notice each turn)</label><input type="checkbox" id="sCar"></div>
         <div class="toggle"><label for="sDiag" style="flex:1">Show mic diagnostics</label><input type="checkbox" id="sDiag"></div>
       </div>
       <div class="field">
@@ -245,9 +245,10 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: true }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: false }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
+if (!lsGet('de.v4', false)) { S.car = false; lsSet('de.v4', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
