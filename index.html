@@ -209,6 +209,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <input type="range" id="sThr" min="0" max="100" step="1">
         <p class="note">The app moves on when you speak for about half a second and then stop. While it is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
         <div class="toggle"><label for="sGate" style="flex:1">Also require the threshold for speech recognition</label><input type="checkbox" id="sGate"></div>
+        <div class="toggle"><label for="sCar" style="flex:1">Car / Bluetooth audio: turn the mic off while the app speaks</label><input type="checkbox" id="sCar"></div>
         <div class="toggle"><label for="sDiag" style="flex:1">Show mic diagnostics</label><input type="checkbox" id="sDiag"></div>
       </div>
       <div class="field">
@@ -244,7 +245,7 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5 }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: true }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
@@ -274,40 +275,62 @@ function speak(text, lang) {
     cancelers.add(done);
     t = setTimeout(done, 4000 + text.length * 250 / S.rate);
     u.onend = done; u.onerror = done;
-    speechSynthesis.speak(u);
+    const go = () => { if (!fin) speechSynthesis.speak(u); };
+    /* Release the mic so iOS routes the voice to the car / Bluetooth; give the route a moment to switch back. */
+    if (S.car && closeMic()) setTimeout(go, 300); else go();
   });
 }
 
 /* ---------- mic level and noise gate ---------- */
-let stream = null, analyser = null, peak = 0, level = 0;
-async function initMic() {
-  if (stream || !navigator.mediaDevices) return;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true } });
-    const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AC(); const src = ctx.createMediaStreamSource(stream);
-    analyser = ctx.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
-    const buf = new Float32Array(analyser.fftSize);
-    let last = performance.now();
-    (function tick(now) {
-      now = now || performance.now();
-      const dt = Math.min(200, now - last); last = now;
+/* While the mic is open iOS routes all output to the phone speaker, so with S.car the mic is closed while the app speaks
+   (see speak()) and reopened before each listen. The analyser and its loop live on and read silence while the mic is closed. */
+let stream = null, analyser = null, actx = null, msrc = null, micFailed = false, peak = 0, level = 0;
+function startMeter() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  actx = new AC(); analyser = actx.createAnalyser(); analyser.fftSize = 1024;
+  const buf = new Float32Array(analyser.fftSize);
+  let last = performance.now();
+  (function tick(now) {
+    now = now || performance.now();
+    const dt = Math.min(200, now - last); last = now;
+    if (stream) {
       analyser.getFloatTimeDomainData(buf);
       let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
       level = Math.sqrt(s / buf.length); peak = Math.max(peak, level);
-      if (vadOn && level >= threshold()) { vadVoiced += dt; vadLastVoice = now; }
-      $('meterFill').style.width = Math.min(100, level / 0.15 * 100) + '%';
-      if (S.diag) diagUpdate();
-      requestAnimationFrame(tick);
-    })();
-  } catch (e) { stream = null; analyser = null; diag.err = 'mic: ' + (e.name || e); }
+    } else level = 0;
+    if (vadOn && level >= threshold()) { vadVoiced += dt; vadLastVoice = now; }
+    $('meterFill').style.width = Math.min(100, level / 0.15 * 100) + '%';
+    if (S.diag) diagUpdate();
+    requestAnimationFrame(tick);
+  })();
 }
+async function openMic() {
+  if (stream || !navigator.mediaDevices) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true } });
+    if (!actx) startMeter();
+    if (actx.state === 'suspended') actx.resume();
+    msrc = actx.createMediaStreamSource(stream); msrc.connect(analyser);
+    micFailed = false;
+  } catch (e) {
+    stream = null; diag.err = 'mic: ' + (e.name || e);
+    if (actx) micFailed = true; else analyser = null;
+  }
+}
+function closeMic() {
+  if (!stream) return false;
+  try { msrc.disconnect(); } catch (e) {}
+  stream.getTracks().forEach(t => t.stop());
+  stream = null; msrc = null; level = 0;
+  return true;
+}
+const micLive = () => !!analyser && !micFailed;
 const threshold = () => S.thr / 100 * 0.15;
-const gateOpen = () => !S.gate || !analyser || peak >= threshold();
+const gateOpen = () => !S.gate || !micLive() || peak >= threshold();
 
 /* Voice activity: counts time above the threshold; an utterance is >= 350 ms of voice followed by the end pause (S.endPause) of quiet. */
 let vadOn = false, vadVoiced = 0, vadLastVoice = 0;
-function vadArm() { vadVoiced = 0; vadLastVoice = 0; vadOn = !!analyser; }
+function vadArm() { vadVoiced = 0; vadLastVoice = 0; vadOn = micLive(); }
 const vadDone = () => vadOn && vadVoiced >= 350 && performance.now() - vadLastVoice >= S.endPause * 1000;
 const vadStarted = () => vadOn && vadVoiced > 0;
 
@@ -315,7 +338,7 @@ const diag = { rec: SRok() ? 'idle' : 'none', heard: '', err: '', restarts: 0 };
 function SRok() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
 function diagUpdate() {
   const el = $('diag'); if (!el) return;
-  el.textContent = 'mic ' + (analyser ? 'on' : 'off') + ' lvl ' + level.toFixed(3) + '/' + threshold().toFixed(3) +
+  el.textContent = 'mic ' + (stream ? 'on' : 'off') + ' lvl ' + level.toFixed(3) + '/' + threshold().toFixed(3) +
     ' voiced ' + Math.round(vadVoiced) + 'ms | rec ' + diag.rec + (diag.heard ? ' "' + diag.heard + '"' : '') +
     (diag.err ? ' err ' + diag.err : '') + ' r' + diag.restarts;
 }
@@ -363,7 +386,7 @@ function listen(lang, accept, o = {}) {
         if (o.immediate) return finish(v);
         /* Words were heard: finish only once the user has been quiet for the whole end pause. */
         const check = () => {
-          const quietFor = analyser && vadLastVoice ? performance.now() - vadLastVoice : Infinity;
+          const quietFor = micLive() && vadLastVoice ? performance.now() - vadLastVoice : Infinity;
           if (quietFor >= S.endPause * 1000) finish(v);
           else deb = setTimeout(check, S.endPause * 1000 - quietFor + 50);
         };
@@ -379,7 +402,7 @@ function listen(lang, accept, o = {}) {
     begin();
   });
 }
-const canHear = () => !!analyser || (!!SR && !micDenied);
+const canHear = () => micLive() || (!!SR && !micDenied);
 
 /* ---------- drill loop ---------- */
 function setPhase(p) { phase = p; render(); }
@@ -393,6 +416,7 @@ async function loop(tok) {
       savePos();
       setPhase('en');
       await speak(phrases[pos].en, 'en-US'); if (!alive()) return;
+      await openMic(); if (!alive()) return;
       setPhase('listen');
       await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
@@ -403,6 +427,7 @@ async function loop(tok) {
     setPhase('prompt');
     await speak('Round finished, repeat or continue?', 'en-US');
     if (!alive()) return;
+    await openMic(); if (!alive()) return;
     const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 2000, immediate: true });
     if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
@@ -420,7 +445,7 @@ let wake = null;
 async function start() {
   try { const u = new SpeechSynthesisUtterance(''); speechSynthesis.speak(u); } catch (e) {}
   try { wake = await navigator.wakeLock.request('screen'); } catch (e) {}
-  await initMic();
+  await openMic();
   stopAll(); running = true;
   loop(runId);
 }
@@ -470,7 +495,7 @@ function render() {
     if (lastIdx !== prevShown) { const pv = $('prev'); pv.classList.remove('fresh'); void pv.offsetWidth; pv.classList.add('fresh'); }
   }
   prevShown = lastIdx;
-  $('meterWrap').hidden = !(analyser && (phase === 'listen' || phase === 'prompt'));
+  $('meterWrap').hidden = !(micLive() && (phase === 'listen' || phase === 'prompt'));
   $('meterThr').style.left = Math.min(100, threshold() / 0.15 * 100) + '%';
   $('icoPlay').toggleAttribute('hidden', running); $('icoPause').toggleAttribute('hidden', !running);
   $('btnMain').setAttribute('aria-label', running ? 'Pause' : 'Start');
@@ -571,6 +596,8 @@ bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(
 bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
 $('sGate').checked = S.gate;
 $('sGate').onchange = () => { S.gate = $('sGate').checked; lsSet('de.settings', S); };
+$('sCar').checked = S.car;
+$('sCar').onchange = () => { S.car = $('sCar').checked; lsSet('de.settings', S); };
 $('sDiag').checked = S.diag;
 $('sDiag').onchange = () => { S.diag = $('sDiag').checked; lsSet('de.settings', S); render(); };
 
