@@ -449,15 +449,21 @@ async function start() {
   stopAll(); running = true;
   loop(runId);
 }
-function pause() { stopAll(); if (wake) { try { wake.release(); } catch (e) {} wake = null; } setPhase('paused'); }
+/* Hand the mic and audio session back to iOS so Siri, calls and other apps can use them. start() reopens them. */
+function releaseAudio() {
+  closeMic();
+  try { if (actx && actx.state === 'running') actx.suspend(); } catch (e) {}
+}
+function pause() { stopAll(); releaseAudio(); if (wake) { try { wake.release(); } catch (e) {} wake = null; } setPhase('paused'); }
 function moveTo(i, startIt) {
   const was = running;
   stopAll();
   pos = Math.max(0, Math.min(phrases.length - 1, i));
   if (pos < batchStart || pos >= batchStart + S.batch) batchStart = pos;
   savePos(); setPhase(was || startIt ? 'idle' : 'paused');
-  if (was || startIt) start();
+  if (was || startIt) start(); else releaseAudio();
 }
+document.addEventListener('visibilitychange', () => { if (document.hidden && running) pause(); });
 function jumpTo(i) { batchStart = Math.max(0, Math.min(phrases.length - 1, i)); moveTo(i, true); }
 
 /* ---------- rendering ---------- */
