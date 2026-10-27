@@ -62,7 +62,7 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 
 .card {
   flex: 1; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
-  padding: 20px; display: flex; flex-direction: column; justify-content: center; gap: 18px; position: relative; overflow-y: auto;
+  padding: 20px; display: flex; flex-direction: column; justify-content: center; gap: 18px; position: relative; z-index: 1; overflow-y: auto;
 }
 .card.tappable { cursor: pointer; }
 .label { font: 500 12px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -79,10 +79,17 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 .status-text { font-weight: 500; }
 .note { font-size: 13px; color: var(--muted); margin: 0; }
 .diag { font: 500 11px/1.4 var(--f-mono); overflow-wrap: anywhere; }
-.prev { padding: 0 4px; display: grid; gap: 2px; }
-.prev[hidden] { display: none; }
-.prev-en { margin: 0; font-size: 15px; color: var(--muted); overflow-wrap: anywhere; }
-.prev-de { margin: 0; font: 500 17px/1.25 var(--f-display); color: var(--gold); overflow-wrap: anywhere; }
+.prev {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px; margin: 0 12px -26px;
+  padding: 12px 16px 36px; display: grid; gap: 2px; flex: none;
+}
+.prev.fresh { animation: prevIn .35s ease-out; }
+.prev-label { display: flex; align-items: center; gap: 6px; }
+.prev-label svg { width: 14px; height: 14px; color: var(--ok); }
+.prev-de { margin: 0; font: 600 clamp(18px, 5vw, 22px)/1.2 var(--f-display); color: var(--gold); overflow-wrap: anywhere; }
+.prev-en { margin: 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+@keyframes prevIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .prev.fresh { animation: none; } }
 
 .meter { height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
 .meter b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ok); transition: width 60ms linear; }
@@ -135,6 +142,15 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
 
   <div class="dots" id="dots" aria-hidden="true"></div>
 
+  <div class="prev" id="prev" hidden>
+    <div class="label prev-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+      Previous <span id="prevN"></span>
+    </div>
+    <p class="prev-de" id="prevDe"></p>
+    <p class="prev-en" id="prevEn"></p>
+  </div>
+
   <section class="card" id="card" aria-live="polite">
     <div>
       <div class="label">English</div>
@@ -156,12 +172,6 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
       <button class="btn primary" id="btnNext">Continue</button>
     </div>
   </section>
-
-  <div class="prev" id="prev" hidden>
-    <div class="label">Previous</div>
-    <p class="prev-en" id="prevEn"></p>
-    <p class="prev-de" id="prevDe"></p>
-  </div>
 
   <div class="transport">
     <button class="t-small" id="btnBack" aria-label="Previous phrase">
@@ -240,7 +250,7 @@ if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
-let pos = 0, batchStart = 0, lastIdx = -1;
+let pos = 0, batchStart = 0, lastIdx = -1, prevShown = -2;
 { const p = lsGet('de.pos', null); if (p && p.pos < phrases.length) { pos = p.pos; batchStart = Math.min(p.batchStart, pos); lastIdx = pos > 0 ? pos - 1 : -1; } }
 
 let runId = 0, running = false, phase = 'idle', micDenied = false;
@@ -455,7 +465,11 @@ function render() {
   $('diag').hidden = !S.diag;
   const lp = phrases[lastIdx];
   $('prev').hidden = !lp;
-  if (lp) { $('prevEn').textContent = lp.en; $('prevDe').textContent = lp.de; }
+  if (lp) {
+    $('prevN').textContent = '· #' + (lastIdx + 1); $('prevEn').textContent = lp.en; $('prevDe').textContent = lp.de;
+    if (lastIdx !== prevShown) { const pv = $('prev'); pv.classList.remove('fresh'); void pv.offsetWidth; pv.classList.add('fresh'); }
+  }
+  prevShown = lastIdx;
   $('meterWrap').hidden = !(analyser && (phase === 'listen' || phase === 'prompt'));
   $('meterThr').style.left = Math.min(100, threshold() / 0.15 * 100) + '%';
   $('icoPlay').toggleAttribute('hidden', running); $('icoPause').toggleAttribute('hidden', !running);
