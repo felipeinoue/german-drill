@@ -79,6 +79,10 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 .status-text { font-weight: 500; }
 .note { font-size: 13px; color: var(--muted); margin: 0; }
 .diag { font: 500 11px/1.4 var(--f-mono); overflow-wrap: anywhere; }
+.prev { padding: 0 4px; display: grid; gap: 2px; }
+.prev[hidden] { display: none; }
+.prev-en { margin: 0; font-size: 15px; color: var(--muted); overflow-wrap: anywhere; }
+.prev-de { margin: 0; font: 500 17px/1.25 var(--f-display); color: var(--gold); overflow-wrap: anywhere; }
 
 .meter { height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
 .meter b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ok); transition: width 60ms linear; }
@@ -152,6 +156,12 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
       <button class="btn primary" id="btnNext">Continue</button>
     </div>
   </section>
+
+  <div class="prev" id="prev" hidden>
+    <div class="label">Previous</div>
+    <p class="prev-en" id="prevEn"></p>
+    <p class="prev-de" id="prevDe"></p>
+  </div>
 
   <div class="transport">
     <button class="t-small" id="btnBack" aria-label="Previous phrase">
@@ -230,8 +240,8 @@ if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
-let pos = 0, batchStart = 0;
-{ const p = lsGet('de.pos', null); if (p && p.pos < phrases.length) { pos = p.pos; batchStart = Math.min(p.batchStart, pos); } }
+let pos = 0, batchStart = 0, lastIdx = -1;
+{ const p = lsGet('de.pos', null); if (p && p.pos < phrases.length) { pos = p.pos; batchStart = Math.min(p.batchStart, pos); lastIdx = pos > 0 ? pos - 1 : -1; } }
 
 let runId = 0, running = false, phase = 'idle', micDenied = false;
 const cancelers = new Set();
@@ -377,7 +387,7 @@ async function loop(tok) {
       await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
       await speak(phrases[pos].de, 'de-DE'); if (!alive()) return;
-      pos++; savePos();
+      lastIdx = pos; pos++; savePos();
     }
     const last = end >= phrases.length;
     setPhase('prompt');
@@ -443,6 +453,9 @@ function render() {
   if (!canHear() && phase !== 'idle') { note.hidden = false; note.textContent = 'The microphone is not available here, so voice detection is off. Tap the card after you speak.'; }
   else note.hidden = true;
   $('diag').hidden = !S.diag;
+  const lp = phrases[lastIdx];
+  $('prev').hidden = !lp;
+  if (lp) { $('prevEn').textContent = lp.en; $('prevDe').textContent = lp.de; }
   $('meterWrap').hidden = !(analyser && (phase === 'listen' || phase === 'prompt'));
   $('meterThr').style.left = Math.min(100, threshold() / 0.15 * 100) + '%';
   $('icoPlay').toggleAttribute('hidden', running); $('icoPause').toggleAttribute('hidden', !running);
@@ -491,7 +504,7 @@ function buildPairs(rows, swap) {
 function applyTable(pairs, rows, sw) {
   phrases = pairs; rawRows = rows; swapped = sw;
   lsSet('de.phrases', rows ? pairs : null); lsSet('de.raw', rows); lsSet('de.swapped', sw);
-  stopAll(); pos = 0; batchStart = 0; savePos(); phase = 'idle'; render(); tableInfo();
+  stopAll(); pos = 0; batchStart = 0; lastIdx = -1; savePos(); phase = 'idle'; render(); tableInfo();
 }
 function tableInfo() {
   $('tableInfo').textContent = phrases.length + ' phrases loaded' + (rawRows ? ' from your uploaded table.' : ' from the built-in table (texts.xlsx).') +
