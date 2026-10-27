@@ -223,10 +223,10 @@ const DEFAULT = [{"de": "Schönes Wochenende", "en": "Have a nice weekend"}, {"d
 const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 2 }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5 }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
+if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
@@ -373,19 +373,16 @@ async function loop(tok) {
       savePos();
       setPhase('en');
       await speak(phrases[pos].en, 'en-US'); if (!alive()) return;
-      await sleep(300); if (!alive()) return;
       setPhase('listen');
       await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
       await speak(phrases[pos].de, 'de-DE'); if (!alive()) return;
-      await sleep(400); if (!alive()) return;
       pos++; savePos();
     }
     const last = end >= phrases.length;
     setPhase('prompt');
     await speak('Round finished, repeat or continue?', 'en-US');
     if (!alive()) return;
-    await sleep(300); if (!alive()) return;
     const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 2000, immediate: true });
     if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
@@ -448,7 +445,7 @@ function render() {
   $('diag').hidden = !S.diag;
   $('meterWrap').hidden = !(analyser && (phase === 'listen' || phase === 'prompt'));
   $('meterThr').style.left = Math.min(100, threshold() / 0.15 * 100) + '%';
-  $('icoPlay').hidden = running; $('icoPause').hidden = !running;
+  $('icoPlay').toggleAttribute('hidden', running); $('icoPause').toggleAttribute('hidden', !running);
   $('btnMain').setAttribute('aria-label', running ? 'Pause' : 'Start');
 }
 
