@@ -77,6 +77,7 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--ring); } 100% { box-shadow: 0 0 0 16px transparent; } }
 @media (prefers-reduced-motion: reduce) { .listening .pulse { animation: none; box-shadow: 0 0 0 6px var(--ring); } }
 .status-text { font-weight: 500; }
+.timer { margin-left: auto; font: 500 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .note { font-size: 13px; color: var(--muted); margin: 0; }
 .diag { font: 500 11px/1.4 var(--f-mono); overflow-wrap: anywhere; }
 .prev {
@@ -163,6 +164,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     <div class="status" id="status">
       <span class="pulse"></span>
       <span class="status-text" id="statusText">Ready</span>
+      <span class="timer" id="timer" hidden></span>
     </div>
     <div class="meter" id="meterWrap" hidden><b id="meterFill"></b><u id="meterThr"></u></div>
     <p class="note" id="note" hidden></p>
@@ -194,6 +196,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
       <div class="field">
         <label for="sBatch">Phrases per round <output id="oBatch"></output></label>
         <input type="range" id="sBatch" min="1" max="30" step="1">
+        <div class="toggle"><label for="sShuffle" style="flex:1">Shuffle phrases</label><input type="checkbox" id="sShuffle"></div>
       </div>
       <div class="field">
         <label for="sPause">Pause before moving on <output id="oPause"></output></label>
@@ -245,13 +248,20 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: false }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: false, shuffle: false }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
 if (!lsGet('de.v4', false)) { S.car = false; lsSet('de.v4', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
+/* `order` is the play order: positions (pos, batchStart, lastIdx) index into it, and it holds indices into `phrases`. */
+const seq = n => Array.from({ length: n }, (_, i) => i);
+const shuffled = n => { const a = seq(n); for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const makeOrder = () => S.shuffle ? shuffled(phrases.length) : seq(phrases.length);
+const validOrder = o => Array.isArray(o) && o.length === phrases.length && new Set(o).size === o.length && o.every(i => Number.isInteger(i) && i >= 0 && i < o.length) && (S.shuffle || o.every((v, i) => v === i));
+let order = lsGet('de.order', null); if (!validOrder(order)) order = makeOrder();
+const ph = i => phrases[order[i]];
 let pos = 0, batchStart = 0, lastIdx = -1, prevShown = -2;
 { const p = lsGet('de.pos', null); if (p && p.pos < phrases.length) { pos = p.pos; batchStart = Math.min(p.batchStart, pos); lastIdx = pos > 0 ? pos - 1 : -1; } }
 
@@ -407,7 +417,19 @@ const canHear = () => micLive() || (!!SR && !micDenied);
 
 /* ---------- drill loop ---------- */
 function setPhase(p) { phase = p; render(); }
-function savePos() { lsSet('de.pos', { pos, batchStart }); }
+function savePos() { lsSet('de.pos', { pos, batchStart }); lsSet('de.order', order); }
+
+/* Time spent on the current phrase: resets when the phrase changes, frozen while stopped. */
+let tIdx = -1, tAcc = 0, tFrom = 0;
+function timerRun() { if (tIdx !== order[pos]) { tIdx = order[pos]; tAcc = 0; } if (!tFrom) tFrom = Date.now(); }
+function timerStop() { if (tFrom) { tAcc += Date.now() - tFrom; tFrom = 0; } }
+const fmtTime = ms => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function updateTimer() {
+  const t = $('timer');
+  t.hidden = !(tIdx === order[pos] &&(phase === 'en' || phase === 'listen' || phase === 'de' || phase === 'paused'));
+  if (!t.hidden) t.textContent = fmtTime(tAcc + (tFrom ? Date.now() - tFrom : 0));
+}
+setInterval(() => { if (tFrom) updateTimer(); }, 250);
 
 async function loop(tok) {
   const alive = () => tok === runId;
@@ -415,14 +437,15 @@ async function loop(tok) {
     const end = Math.min(batchStart + S.batch, phrases.length);
     while (pos < end) {
       savePos();
+      timerRun();
       setPhase('en');
-      await speak(phrases[pos].en, 'en-US'); if (!alive()) return;
+      await speak(ph(pos).en, 'en-US'); if (!alive()) return;
       await openMic(); if (!alive()) return;
       setPhase('listen');
       await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
-      await speak(phrases[pos].de, 'de-DE'); if (!alive()) return;
-      lastIdx = pos; pos++; savePos();
+      await speak(ph(pos).de, 'de-DE'); if (!alive()) return;
+      timerStop(); lastIdx = pos; pos++; savePos();
     }
     const last = end >= phrases.length;
     setPhase('prompt');
@@ -432,13 +455,16 @@ async function loop(tok) {
     const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 2000, immediate: true });
     if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
-    else { batchStart = last ? 0 : end; pos = batchStart; }
+    else {
+      if (last && S.shuffle) { order = shuffled(phrases.length); lastIdx = -1; }
+      batchStart = last ? 0 : end; pos = batchStart;
+    }
     savePos();
   }
 }
 
 function stopAll() {
-  runId++; running = false;
+  runId++; running = false; timerStop();
   try { speechSynthesis.cancel(); } catch (e) {}
   [...cancelers].forEach(f => f()); cancelers.clear();
 }
@@ -469,7 +495,7 @@ function jumpTo(i) { batchStart = Math.max(0, Math.min(phrases.length - 1, i)); 
 
 /* ---------- rendering ---------- */
 function render() {
-  const p = phrases[pos];
+  const p = ph(pos);
   const end = Math.min(batchStart + S.batch, phrases.length);
   $('count').textContent = (pos + 1) + ' / ' + phrases.length;
   const dots = $('dots'); dots.textContent = '';
@@ -495,10 +521,11 @@ function render() {
   if (!canHear() && phase !== 'idle') { note.hidden = false; note.textContent = 'The microphone is not available here, so voice detection is off. Tap the card after you speak.'; }
   else note.hidden = true;
   $('diag').hidden = !S.diag;
-  const lp = phrases[lastIdx];
+  updateTimer();
+  const lp = ph(lastIdx);
   $('prev').hidden = !lp;
   if (lp) {
-    $('prevN').textContent = '· #' + (lastIdx + 1); $('prevEn').textContent = lp.en; $('prevDe').textContent = lp.de;
+    $('prevN').textContent = '· #' + (order[lastIdx] + 1); $('prevEn').textContent = lp.en; $('prevDe').textContent = lp.de;
     if (lastIdx !== prevShown) { const pv = $('prev'); pv.classList.remove('fresh'); void pv.offsetWidth; pv.classList.add('fresh'); }
   }
   prevShown = lastIdx;
@@ -516,12 +543,12 @@ function renderList() {
   phrases.forEach((p, i) => {
     if (q && !(p.en + ' ' + p.de).toLowerCase().includes(q)) return;
     const b = document.createElement('button');
-    b.className = 'row' + (i === pos ? ' cur' : '');
+    b.className = 'row' + (i === order[pos] ? ' cur' : '');
     const n = document.createElement('div'); n.className = 'n'; n.textContent = i + 1;
     const t = document.createElement('div'); t.className = 't'; t.textContent = p.en;
     const s = document.createElement('span'); s.textContent = p.de; t.appendChild(s);
     b.append(n, t);
-    b.onclick = () => { $('sheetList').hidden = true; jumpTo(i); };
+    b.onclick = () => { $('sheetList').hidden = true; jumpTo(order.indexOf(i)); };
     frag.appendChild(b);
   });
   list.appendChild(frag);
@@ -550,7 +577,7 @@ function buildPairs(rows, swap) {
 function applyTable(pairs, rows, sw) {
   phrases = pairs; rawRows = rows; swapped = sw;
   lsSet('de.phrases', rows ? pairs : null); lsSet('de.raw', rows); lsSet('de.swapped', sw);
-  stopAll(); pos = 0; batchStart = 0; lastIdx = -1; savePos(); phase = 'idle'; render(); tableInfo();
+  stopAll(); order = makeOrder(); pos = 0; batchStart = 0; lastIdx = -1; savePos(); phase = 'idle'; render(); tableInfo();
 }
 function tableInfo() {
   $('tableInfo').textContent = phrases.length + ' phrases loaded' + (rawRows ? ' from your uploaded table.' : ' from the built-in table (texts.xlsx).') +
@@ -588,7 +615,7 @@ $('closeSettings').onclick = () => { $('sheetSettings').hidden = true; render();
 $('btnList').onclick = () => { $('q').value = ''; renderList(); $('goto').max = phrases.length; $('sheetList').hidden = false; };
 $('closeList').onclick = () => { $('sheetList').hidden = true; };
 $('q').oninput = renderList;
-const go = () => { const n = parseInt($('goto').value, 10); if (n >= 1 && n <= phrases.length) { $('sheetList').hidden = true; jumpTo(n - 1); } };
+const go = () => { const n = parseInt($('goto').value, 10); if (n >= 1 && n <= phrases.length) { $('sheetList').hidden = true; jumpTo(order.indexOf(n - 1)); } };
 $('btnGo').onclick = go;
 $('goto').onkeydown = e => { if (e.key === 'Enter') go(); };
 
@@ -603,6 +630,15 @@ bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(
 bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
 $('sGate').checked = S.gate;
 $('sGate').onchange = () => { S.gate = $('sGate').checked; lsSet('de.settings', S); };
+$('sShuffle').checked = S.shuffle;
+$('sShuffle').onchange = () => {
+  S.shuffle = $('sShuffle').checked; lsSet('de.settings', S);
+  const c = order[pos], was = running;
+  order = makeOrder();
+  if (S.shuffle) { order.splice(order.indexOf(c), 1); order.unshift(c); }
+  lastIdx = -1;
+  moveTo(order.indexOf(c), was);
+};
 $('sCar').checked = S.car;
 $('sCar').onchange = () => { S.car = $('sCar').checked; lsSet('de.settings', S); };
 $('sDiag').checked = S.diag;
