@@ -100,8 +100,16 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 .btn { min-height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
-.modes { display: flex; justify-content: center; }
-.pill { min-height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.seg button { min-height: 36px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-weight: 700; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.flist { flex: 1; min-height: 0; overflow-y: auto; position: relative; display: flex; flex-direction: column; gap: 8px; -webkit-overflow-scrolling: touch; }
+.frow { grid-template-columns: 38px 1fr; padding: 14px 12px; width: 100%; flex: none; align-items: start; }
+.fen { font: 700 clamp(20px, 5.5vw, 26px)/1.2 var(--f-display); overflow-wrap: anywhere; }
+.fde { margin-top: 8px; padding: 2px 6px; margin-left: -6px; min-height: 1.5em; border-radius: 8px; font: 500 clamp(18px, 5vw, 24px)/1.25 var(--f-display); color: var(--gold); overflow-wrap: anywhere; }
+.fde.covered { color: transparent; background: var(--line); user-select: none; -webkit-user-select: none; }
+.modes { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.pill { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
 .pill svg { width: 18px; height: 18px; }
 .pill[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .transport { display: flex; align-items: center; justify-content: center; gap: 20px; padding-bottom: 4px; }
@@ -145,6 +153,11 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     </button>
   </header>
 
+  <div class="seg" role="group" aria-label="Mode">
+    <button id="mDrive" aria-pressed="true">Drive</button>
+    <button id="mFocus" aria-pressed="false">Focus</button>
+  </div>
+
   <div class="dots" id="dots" aria-hidden="true"></div>
 
   <div class="prev" id="prev" hidden>
@@ -179,11 +192,15 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     </div>
   </section>
 
+  <div class="flist" id="flist" hidden aria-label="Phrases: tap to uncover the German"></div>
+
   <div class="modes">
     <button class="pill" id="btnShuffle" aria-pressed="false">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
       Shuffle
     </button>
+    <button class="pill" id="btnBack15" hidden>↑ 15</button>
+    <button class="pill" id="btnCover" hidden>Cover all</button>
   </div>
 
   <div class="transport">
@@ -258,7 +275,7 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: false, shuffle: false }, lsGet('de.settings', {}));
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: false, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
 if (!lsGet('de.v4', false)) { S.car = false; lsSet('de.v4', true); lsSet('de.settings', S); }
@@ -534,7 +551,7 @@ function render() {
   updateTimer();
   $('btnShuffle').setAttribute('aria-pressed', S.shuffle);
   const lp = ph(lastIdx);
-  $('prev').hidden = !lp;
+  $('prev').hidden = !lp || S.mode === 'focus';
   if (lp) {
     $('prevN').textContent = '· #' + (order[lastIdx] + 1); $('prevEn').textContent = lp.en; $('prevDe').textContent = lp.de;
     if (lastIdx !== prevShown) { const pv = $('prev'); pv.classList.remove('fresh'); void pv.offsetWidth; pv.classList.add('fresh'); }
@@ -545,6 +562,65 @@ function render() {
   $('icoPlay').toggleAttribute('hidden', running); $('icoPause').toggleAttribute('hidden', !running);
   $('btnMain').setAttribute('aria-label', running ? 'Pause' : 'Start');
 }
+
+/* ---------- focus mode ---------- */
+/* A scrolling list for full-attention study: English shown, German covered like a thumb over a table column. Tap a row to uncover it. No audio, no grading. */
+let focusObs = null, focusSaveT = 0;
+function renderFocus() {
+  const l = $('flist'); l.textContent = '';
+  if (focusObs) focusObs.disconnect();
+  focusObs = new IntersectionObserver(es => {
+    for (const e of es) if (!e.isIntersecting) e.target.querySelector('.fde').classList.add('covered');
+  }, { root: l });
+  const frag = document.createDocumentFragment();
+  order.forEach(i => {
+    const p = phrases[i];
+    const b = document.createElement('button');
+    b.className = 'row frow'; b.dataset.i = i;
+    const n = document.createElement('div'); n.className = 'n'; n.textContent = i + 1;
+    const t = document.createElement('div'); t.className = 't';
+    const en = document.createElement('div'); en.className = 'fen'; en.textContent = p.en;
+    const de = document.createElement('div'); de.className = 'fde covered'; de.textContent = p.de;
+    t.append(en, de); b.append(n, t);
+    frag.appendChild(b);
+  });
+  l.appendChild(frag);
+  [...l.children].forEach(r => focusObs.observe(r));
+}
+function topRowIdx() {
+  const l = $('flist'), r = l.children;
+  for (let k = 0; k < r.length; k++) if (r[k].offsetTop + r[k].offsetHeight > l.scrollTop + 1) return k;
+  return 0;
+}
+function scrollToRow(i, smooth) {
+  const l = $('flist'), r = l.querySelector('[data-i="' + i + '"]');
+  l.scrollTo({ top: r ? r.offsetTop : 0, behavior: smooth ? 'smooth' : 'auto' });
+}
+$('flist').onclick = e => { const r = e.target.closest('.frow'); if (r) r.querySelector('.fde').classList.toggle('covered'); };
+$('flist').onscroll = () => {
+  clearTimeout(focusSaveT);
+  focusSaveT = setTimeout(() => { const r = $('flist').children[topRowIdx()]; if (r) lsSet('de.focus', +r.dataset.i); }, 300);
+};
+$('btnBack15').onclick = () => {
+  const r = $('flist').children[Math.max(0, topRowIdx() - 15)];
+  if (r) scrollToRow(r.dataset.i, true);
+};
+$('btnCover').onclick = () => $('flist').querySelectorAll('.fde').forEach(d => d.classList.add('covered'));
+function setMode(m) {
+  const focus = m === 'focus';
+  S.mode = m; lsSet('de.settings', S);
+  if (focus && running) pause();
+  ['dots', 'card'].forEach(id => $(id).hidden = focus);
+  document.querySelector('.transport').hidden = focus;
+  $('flist').hidden = !focus; $('btnBack15').hidden = !focus; $('btnCover').hidden = !focus;
+  $('mDrive').setAttribute('aria-pressed', !focus); $('mFocus').setAttribute('aria-pressed', focus);
+  if (focus) { renderFocus(); scrollToRow(lsGet('de.focus', -1)); }
+  render();
+}
+$('mDrive').onclick = () => { if (S.mode !== 'drive') setMode('drive'); };
+$('mFocus').onclick = () => { if (S.mode !== 'focus') setMode('focus'); };
+/* Jump to a phrase by table index: scroll the list in Focus, restart the drill from it in Drive. */
+function goPhrase(i) { if (S.mode === 'focus') scrollToRow(i); else jumpTo(order.indexOf(i)); }
 
 /* ---------- list / jump ---------- */
 function renderList() {
@@ -559,7 +635,7 @@ function renderList() {
     const t = document.createElement('div'); t.className = 't'; t.textContent = p.en;
     const s = document.createElement('span'); s.textContent = p.de; t.appendChild(s);
     b.append(n, t);
-    b.onclick = () => { $('sheetList').hidden = true; jumpTo(order.indexOf(i)); };
+    b.onclick = () => { $('sheetList').hidden = true; goPhrase(i); };
     frag.appendChild(b);
   });
   list.appendChild(frag);
@@ -588,7 +664,7 @@ function buildPairs(rows, swap) {
 function applyTable(pairs, rows, sw) {
   phrases = pairs; rawRows = rows; swapped = sw;
   lsSet('de.phrases', rows ? pairs : null); lsSet('de.raw', rows); lsSet('de.swapped', sw);
-  stopAll(); order = makeOrder(); pos = 0; batchStart = 0; lastIdx = -1; savePos(); phase = 'idle'; render(); tableInfo();
+  stopAll(); order = makeOrder(); pos = 0; batchStart = 0; lastIdx = -1; savePos(); phase = 'idle'; render(); tableInfo(); if (S.mode === 'focus') renderFocus();
 }
 function tableInfo() {
   $('tableInfo').textContent = phrases.length + ' phrases loaded' + (rawRows ? ' from your uploaded table.' : ' from the built-in table (texts.xlsx).') +
@@ -626,7 +702,7 @@ $('closeSettings').onclick = () => { $('sheetSettings').hidden = true; render();
 $('btnList').onclick = () => { $('q').value = ''; renderList(); $('goto').max = phrases.length; $('sheetList').hidden = false; };
 $('closeList').onclick = () => { $('sheetList').hidden = true; };
 $('q').oninput = renderList;
-const go = () => { const n = parseInt($('goto').value, 10); if (n >= 1 && n <= phrases.length) { $('sheetList').hidden = true; jumpTo(order.indexOf(n - 1)); } };
+const go = () => { const n = parseInt($('goto').value, 10); if (n >= 1 && n <= phrases.length) { $('sheetList').hidden = true; goPhrase(n - 1); } };
 $('btnGo').onclick = go;
 $('goto').onkeydown = e => { if (e.key === 'Enter') go(); };
 
@@ -648,6 +724,7 @@ $('btnShuffle').onclick = () => {
   if (S.shuffle) { order.splice(order.indexOf(c), 1); order.unshift(c); }
   lastIdx = -1;
   moveTo(order.indexOf(c), was);
+  if (S.mode === 'focus') { renderFocus(); $('flist').scrollTop = 0; }
 };
 $('sCar').checked = S.car;
 $('sCar').onchange = () => { S.car = $('sCar').checked; lsSet('de.settings', S); };
@@ -655,7 +732,7 @@ $('sDiag').checked = S.diag;
 $('sDiag').onchange = () => { S.diag = $('sDiag').checked; lsSet('de.settings', S); render(); };
 
 if (window.speechSynthesis) speechSynthesis.getVoices();
-render(); tableInfo();
+render(); tableInfo(); setMode(S.mode);
 </script>
 
 </body></html>
