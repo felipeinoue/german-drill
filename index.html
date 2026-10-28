@@ -100,6 +100,10 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 .btn { min-height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
+.modes { display: flex; justify-content: center; }
+.pill { min-height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+.pill svg { width: 18px; height: 18px; }
+.pill[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .transport { display: flex; align-items: center; justify-content: center; gap: 20px; padding-bottom: 4px; }
 .t-small { width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
 .t-main { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
@@ -175,6 +179,13 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     </div>
   </section>
 
+  <div class="modes">
+    <button class="pill" id="btnShuffle" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+      Shuffle
+    </button>
+  </div>
+
   <div class="transport">
     <button class="t-small" id="btnBack" aria-label="Previous phrase">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg>
@@ -196,7 +207,6 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
       <div class="field">
         <label for="sBatch">Phrases per round <output id="oBatch"></output></label>
         <input type="range" id="sBatch" min="1" max="30" step="1">
-        <div class="toggle"><label for="sShuffle" style="flex:1">Shuffle phrases</label><input type="checkbox" id="sShuffle"></div>
       </div>
       <div class="field">
         <label for="sPause">Pause before moving on <output id="oPause"></output></label>
@@ -522,6 +532,7 @@ function render() {
   else note.hidden = true;
   $('diag').hidden = !S.diag;
   updateTimer();
+  $('btnShuffle').setAttribute('aria-pressed', S.shuffle);
   const lp = ph(lastIdx);
   $('prev').hidden = !lp;
   if (lp) {
@@ -630,9 +641,8 @@ bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(
 bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
 $('sGate').checked = S.gate;
 $('sGate').onchange = () => { S.gate = $('sGate').checked; lsSet('de.settings', S); };
-$('sShuffle').checked = S.shuffle;
-$('sShuffle').onchange = () => {
-  S.shuffle = $('sShuffle').checked; lsSet('de.settings', S);
+$('btnShuffle').onclick = () => {
+  S.shuffle = !S.shuffle; lsSet('de.settings', S);
   const c = order[pos], was = running;
   order = makeOrder();
   if (S.shuffle) { order.splice(order.indexOf(c), 1); order.unshift(c); }
