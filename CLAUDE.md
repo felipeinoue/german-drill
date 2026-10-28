@@ -12,7 +12,7 @@ The whole app is one static file, `index.html` (vanilla JS, no framework, no bui
 
 - Run locally: open `index.html` in desktop Chrome. Speech works on `file://`, and the mic needs a user tap on Start.
 - Syntax check without a browser: extract the `<script>` body and run it through `new Function(...)` in node.
-- Always commit after making changes (do not wait to be asked). Pushing to deploy is still a separate step.
+- Always commit and push to `origin/main` after making changes (do not wait to be asked). The user tests on the iPhone through the GitHub Pages URL.
 - Deploy: `git push` to `origin/main` (`felipeinoue/german-drill`). GitHub Pages serves the root at https://felipeinoue.github.io/german-drill/ and updates in about a minute. `gh` is installed at `C:\Program Files\GitHub CLI\gh.exe` (not on PATH in the Claude shell) and git uses its credentials.
 - Replacing the built-in phrases: regenerate the `DEFAULT` array (`[{"de","en"}, ...]`) from `texts.xlsx` with openpyxl and paste it into `index.html`. Users can also upload a table in the app (SheetJS from cdnjs), stored in their browser only.
 
