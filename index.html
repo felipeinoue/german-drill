@@ -78,7 +78,7 @@ header h1 { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin: 0
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--ring); } 100% { box-shadow: 0 0 0 16px transparent; } }
 @media (prefers-reduced-motion: reduce) { .listening .pulse { animation: none; box-shadow: 0 0 0 6px var(--ring); } }
 .status-text { font-weight: 500; }
-.timer { margin-left: auto; font: 500 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.clock { font: 500 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; background: none; border: 0; padding: 4px; cursor: pointer; }
 .note { font-size: 13px; color: var(--muted); margin: 0; }
 .diag { font: 500 11px/1.4 var(--f-mono); overflow-wrap: anywhere; }
 .prev {
@@ -150,6 +150,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
 <div id="app">
   <header>
     <h1>Deutsch Drill</h1>
+    <button class="clock" id="clock" aria-label="Session time, tap to reset">0:00</button>
     <span class="count" id="count">0 / 0</span>
     <button class="icon-btn" id="btnList" aria-label="Phrase list and jump">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
@@ -186,9 +187,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
     </div>
     <div class="status" id="status">
       <span class="pulse"></span>
-      <span class="status-text" id="statusText">Ready</span>
-      <span class="timer" id="timer" hidden></span>
-    </div>
+      <span class="status-text" id="statusText">Ready</span>    </div>
     <div class="meter" id="meterWrap" hidden><b id="meterFill"></b><u id="meterThr"></u></div>
     <p class="note" id="note" hidden></p>
     <p class="note diag" id="diag" hidden></p>
@@ -244,7 +243,6 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <label for="sThr">Voice threshold <output id="oThr"></output></label>
         <input type="range" id="sThr" min="0" max="100" step="1">
         <p class="note">The app moves on when you speak for about half a second and then stop. While it is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
-        <div class="toggle"><label for="sGate" style="flex:1">Also require the threshold for speech recognition</label><input type="checkbox" id="sGate"></div>
         <div class="toggle"><label for="sDiag" style="flex:1">Show mic diagnostics</label><input type="checkbox" id="sDiag"></div>
       </div>
       <div class="field">
@@ -281,9 +279,9 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const BUILD = '2026-10-30 a';  /* bump on every commit so the phone shows which version it runs */
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 30, diag: true, endPause: 1.5, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
-if (!lsGet('de.v2', false)) { S.thr = 30; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
+const BUILD = '2026-10-30 05:47';  /* set to the commit's date and time so the phone shows which version it runs */
+const S = Object.assign({ batch: 5, rate: 0.9, thr: 30, diag: true, endPause: 1.5, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
+if (!lsGet('de.v2', false)) { S.thr = 30; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
 if (!lsGet('de.v5', false)) { S.thr = 30; lsSet('de.v5', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
@@ -369,7 +367,8 @@ function closeMic() {
 }
 const micLive = () => !!analyser && !micFailed;
 const threshold = () => S.thr / 100 * 0.15;
-const gateOpen = () => !S.gate || !micLive() || peak >= threshold();
+/* Recognized words only count if the mic level reached the threshold during this turn. */
+const gateOpen = () => !micLive() || peak >= threshold();
 
 /* Voice activity: counts time above the threshold; an utterance is >= 350 ms of voice followed by the end pause (S.endPause) of quiet. */
 let vadOn = false, vadVoiced = 0, vadLastVoice = 0;
@@ -451,17 +450,15 @@ const canHear = () => micLive() || (!!SR && !micDenied);
 function setPhase(p) { phase = p; render(); }
 function savePos() { lsSet('de.pos', { pos, batchStart }); lsSet('de.order', order); }
 
-/* Time spent on the current phrase: resets when the phrase changes, frozen while stopped. */
-let tIdx = -1, tAcc = 0, tFrom = 0;
-function timerRun() { if (tIdx !== order[pos]) { tIdx = order[pos]; tAcc = 0; } if (!tFrom) tFrom = Date.now(); }
-function timerStop() { if (tFrom) { tAcc += Date.now() - tFrom; tFrom = 0; } }
-const fmtTime = ms => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
-function updateTimer() {
-  const t = $('timer');
-  t.hidden = !(tIdx === order[pos] &&(phase === 'en' || phase === 'listen' || phase === 'de' || phase === 'paused'));
-  if (!t.hidden) t.textContent = fmtTime(tAcc + (tFrom ? Date.now() - tFrom : 0));
-}
-setInterval(() => { if (tFrom) updateTimer(); }, 250);
+/* Session clock in the header: counts from page load and restarts on tap or when the page comes back (unlock, app switch). Never saved. */
+let sessionFrom = Date.now();
+const fmtTime = ms => {
+  const s = Math.floor(ms / 1000), m = Math.floor(s / 60) % 60, h = Math.floor(s / 3600), ss = String(s % 60).padStart(2, '0');
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + ss : m + ':' + ss;
+};
+const drawClock = () => { $('clock').textContent = fmtTime(Date.now() - sessionFrom); };
+function resetClock() { sessionFrom = Date.now(); drawClock(); }
+setInterval(drawClock, 500);
 
 async function loop(tok) {
   const alive = () => tok === runId;
@@ -469,7 +466,6 @@ async function loop(tok) {
     const end = Math.min(batchStart + S.batch, phrases.length);
     while (pos < end) {
       savePos();
-      timerRun();
       setPhase('en');
       await speak(ph(pos).en, 'en-US'); if (!alive()) return;
       await openMic(); if (!alive()) return;
@@ -477,7 +473,7 @@ async function loop(tok) {
       await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
       await speak(ph(pos).de, 'de-DE'); if (!alive()) return;
-      timerStop(); lastIdx = pos; pos++; savePos();
+      lastIdx = pos; pos++; savePos();
     }
     const last = end >= phrases.length;
     setPhase('prompt');
@@ -496,7 +492,7 @@ async function loop(tok) {
 }
 
 function stopAll() {
-  runId++; running = false; timerStop();
+  runId++; running = false;
   try { speechSynthesis.cancel(); } catch (e) {}
   [...cancelers].forEach(f => f()); cancelers.clear();
 }
@@ -530,7 +526,9 @@ async function checkUpdate() {
     if (m && m[1] !== BUILD && !running) location.replace(location.pathname + '?v=' + encodeURIComponent(m[1]));
   } catch (e) {}
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden && running) pause(); else if (!document.hidden) checkUpdate(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && running) pause(); else if (!document.hidden) { resetClock(); checkUpdate(); } });
+window.addEventListener('pageshow', e => { if (e.persisted) resetClock(); });
+$('clock').onclick = resetClock;
 function jumpTo(i) { batchStart = Math.max(0, Math.min(phrases.length - 1, i)); moveTo(i, true); }
 
 /* ---------- rendering ---------- */
@@ -561,7 +559,6 @@ function render() {
   if (!canHear() && phase !== 'idle') { note.hidden = false; note.textContent = 'The microphone is not available here, so voice detection is off. Tap the card after you speak.'; }
   else note.hidden = true;
   $('diag').hidden = !S.diag;
-  updateTimer();
   $('btnShuffle').setAttribute('aria-pressed', S.shuffle);
   const lp = ph(lastIdx);
   $('prev').hidden = !lp || S.mode === 'focus';
@@ -734,8 +731,6 @@ bindSetting('sBatch', 'batch', 'oBatch', v => v, v => parseInt(v, 10));
 bindSetting('sPause', 'endPause', 'oPause', v => v.toFixed(2).replace(/0$/, '') + ' s', v => parseFloat(v));
 bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(v));
 bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
-$('sGate').checked = S.gate;
-$('sGate').onchange = () => { S.gate = $('sGate').checked; lsSet('de.settings', S); };
 $('btnShuffle').onclick = () => {
   S.shuffle = !S.shuffle; lsSet('de.settings', S);
   const c = order[pos], was = running;
