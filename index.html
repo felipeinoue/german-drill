@@ -279,7 +279,7 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const BUILD = '2026-10-30 05:47';  /* set to the commit's date and time so the phone shows which version it runs */
+const BUILD = '2026-10-30 05:49';  /* set to the commit's date and time so the phone shows which version it runs */
 const S = Object.assign({ batch: 5, rate: 0.9, thr: 30, diag: true, endPause: 1.5, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 30; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
@@ -450,14 +450,17 @@ const canHear = () => micLive() || (!!SR && !micDenied);
 function setPhase(p) { phase = p; render(); }
 function savePos() { lsSet('de.pos', { pos, batchStart }); lsSet('de.order', order); }
 
-/* Session clock in the header: counts from page load and restarts on tap or when the page comes back (unlock, app switch). Never saved. */
-let sessionFrom = Date.now();
+/* Session clock in the header. Drive: starts at the first play. Focus: starts on entering Focus. It keeps counting through pauses.
+   Tap, or the page coming back (unlock, app switch), resets it: it restarts at once in Focus or while playing, else waits at 0:00 for play.
+   sessionFrom is 0 while it has not started. Never saved. */
+let sessionFrom = 0;
 const fmtTime = ms => {
   const s = Math.floor(ms / 1000), m = Math.floor(s / 60) % 60, h = Math.floor(s / 3600), ss = String(s % 60).padStart(2, '0');
   return h ? h + ':' + String(m).padStart(2, '0') + ':' + ss : m + ':' + ss;
 };
-const drawClock = () => { $('clock').textContent = fmtTime(Date.now() - sessionFrom); };
-function resetClock() { sessionFrom = Date.now(); drawClock(); }
+const drawClock = () => { $('clock').textContent = fmtTime(sessionFrom ? Date.now() - sessionFrom : 0); };
+function startClock() { if (!sessionFrom) sessionFrom = Date.now(); drawClock(); }
+function resetClock() { sessionFrom = S.mode === 'focus' || running ? Date.now() : 0; drawClock(); }
 setInterval(drawClock, 500);
 
 async function loop(tok) {
@@ -501,7 +504,7 @@ async function start() {
   try { const u = new SpeechSynthesisUtterance(''); speechSynthesis.speak(u); } catch (e) {}
   try { wake = await navigator.wakeLock.request('screen'); } catch (e) {}
   await openMic();
-  stopAll(); running = true;
+  stopAll(); running = true; startClock();
   loop(runId);
 }
 /* Hand the mic and audio session back to iOS so Siri, calls and other apps can use them. start() reopens them. */
@@ -626,6 +629,7 @@ function setMode(m) {
   const focus = m === 'focus';
   S.mode = m; lsSet('de.settings', S);
   if (focus && running) pause();
+  if (focus) startClock(); else if (!running) { sessionFrom = 0; drawClock(); }
   ['dots', 'card'].forEach(id => $(id).hidden = focus);
   document.querySelector('.transport').hidden = focus;
   $('flist').hidden = !focus; $('btnBack15').hidden = !focus; $('btnCover').hidden = !focus;
