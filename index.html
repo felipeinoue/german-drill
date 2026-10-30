@@ -258,6 +258,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <p class="note" id="uploadMsg" hidden></p>
       </div>
       <p class="note" id="buildInfo"></p>
+      <p class="note diag" id="diag2"></p>
     </div>
   </div>
 </div>
@@ -281,7 +282,7 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const BUILD = '2026-10-30 a';  /* bump on every commit so the phone shows which version it runs */
+const BUILD = '2026-10-30 b';  /* bump on every commit so the phone shows which version it runs */
 const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 30, diag: true, endPause: 1.5, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 30; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
@@ -360,6 +361,16 @@ async function openMic() {
     if (actx) micFailed = true; else analyser = null;
   }
 }
+/* Before each listen: reopen the mic only if iOS ended its track, and wake a suspended audio context. Does nothing while healthy. */
+async function ensureMic() {
+  const trk = stream && stream.getAudioTracks()[0];
+  if (stream && (!trk || trk.readyState === 'ended')) { closeMic(); diag.reopens++; }
+  await openMic();
+  if (actx && stream && actx.state !== 'running') {
+    diag.resumes++;
+    try { await Promise.race([actx.resume(), new Promise(r => setTimeout(r, 500))]); } catch (e) {}
+  }
+}
 function closeMic() {
   if (!stream) return false;
   try { msrc.disconnect(); } catch (e) {}
@@ -377,13 +388,17 @@ function vadArm() { vadVoiced = 0; vadLastVoice = 0; vadOn = micLive(); }
 const vadDone = () => vadOn && vadVoiced >= 350 && performance.now() - vadLastVoice >= S.endPause * 1000;
 const vadStarted = () => vadOn && vadVoiced > 0;
 
-const diag = { rec: SRok() ? 'idle' : 'none', heard: '', err: '', restarts: 0 };
+const diag = { rec: SRok() ? 'idle' : 'none', heard: '', err: '', restarts: 0, reopens: 0, resumes: 0 };
 function SRok() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
 function diagUpdate() {
-  const el = $('diag'); if (!el) return;
-  el.textContent = 'mic ' + (stream ? 'on' : 'off') + ' lvl ' + level.toFixed(3) + '/' + threshold().toFixed(3) +
+  const trk = stream && stream.getAudioTracks()[0];
+  const txt = 'mic ' + (stream ? 'on' : 'off') + ' lvl ' + level.toFixed(3) + '/' + threshold().toFixed(3) +
     ' voiced ' + Math.round(vadVoiced) + 'ms | rec ' + diag.rec + (diag.heard ? ' "' + diag.heard + '"' : '') +
-    (diag.err ? ' err ' + diag.err : '') + ' r' + diag.restarts + ' | ' + BUILD;
+    (diag.err ? ' err ' + diag.err : '') + ' r' + diag.restarts +
+    ' | ctx ' + (actx ? actx.state : '-') + ' trk ' + (trk ? trk.readyState + (trk.muted ? '/muted' : '') : '-') +
+    ' ro' + diag.reopens + ' rs' + diag.resumes + ' | ' + BUILD;
+  const el = $('diag'); if (el) el.textContent = txt;
+  const el2 = $('diag2'); if (el2) el2.textContent = txt;
 }
 
 /* ---------- speech in ---------- */
@@ -472,7 +487,7 @@ async function loop(tok) {
       timerRun();
       setPhase('en');
       await speak(ph(pos).en, 'en-US'); if (!alive()) return;
-      await openMic(); if (!alive()) return;
+      await ensureMic(); if (!alive()) return;
       setPhase('listen');
       await listen('de-DE', acceptSpeech, { vadValue: 'voice' }); if (!alive()) return;
       setPhase('de');
@@ -483,8 +498,8 @@ async function loop(tok) {
     setPhase('prompt');
     await speak('Round finished, repeat or continue?', 'en-US');
     if (!alive()) return;
-    await openMic(); if (!alive()) return;
-    const cmd = await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 2000, immediate: true });
+    await ensureMic(); if (!alive()) return;
+    const cmd =await listen('en-US', acceptCmd, { vadValue: 'next', vadGrace: 2000, immediate: true });
     if (!alive()) return;
     if (cmd === 'repeat') { pos = batchStart; }
     else {
