@@ -282,7 +282,7 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const BUILD = '2026-10-30 05:55';  /* set to the commit's date and time so the phone shows which version it runs */
+const BUILD = '261030.060022.4661';  /* set to the commit's timestamp, yymmdd.hhmmss.ffff, so the phone shows which version it runs */
 /* The settings the Settings sheet controls; the "Reset to defaults" button restores these (not shuffle, mode, table or progress). */
 const SETTING_DEFAULTS = { batch: 5, rate: 0.9, thr: 30, diag: true, endPause: 1.5 };
 const S = Object.assign({}, SETTING_DEFAULTS, { shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
