@@ -246,6 +246,9 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <div class="toggle"><label for="sDiag" style="flex:1">Show mic diagnostics</label><input type="checkbox" id="sDiag"></div>
       </div>
       <div class="field">
+        <button class="btn" id="btnDefaults">Reset settings to defaults</button>
+      </div>
+      <div class="field">
         <div class="fl">Phrase table</div>
         <p class="note" id="tableInfo"></p>
         <div class="inline">
@@ -279,8 +282,10 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const BUILD = '2026-10-30 05:49';  /* set to the commit's date and time so the phone shows which version it runs */
-const S = Object.assign({ batch: 5, rate: 0.9, thr: 30, diag: true, endPause: 1.5, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
+const BUILD = '2026-10-30 05:55';  /* set to the commit's date and time so the phone shows which version it runs */
+/* The settings the Settings sheet controls; the "Reset to defaults" button restores these (not shuffle, mode, table or progress). */
+const SETTING_DEFAULTS = { batch: 5, rate: 0.9, thr: 30, diag: true, endPause: 1.5 };
+const S = Object.assign({}, SETTING_DEFAULTS, { shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
 if (!lsGet('de.v2', false)) { S.thr = 30; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
 if (!lsGet('de.v5', false)) { S.thr = 30; lsSet('de.v5', true); lsSet('de.settings', S); }
@@ -731,10 +736,18 @@ function bindSetting(id, key, out, fmt, conv) {
   el.value = S[key]; if (out) $(out).textContent = fmt(S[key]);
   el.oninput = () => { S[key] = conv(el.value); if (out) $(out).textContent = fmt(S[key]); lsSet('de.settings', S); };
 }
-bindSetting('sBatch', 'batch', 'oBatch', v => v, v => parseInt(v, 10));
-bindSetting('sPause', 'endPause', 'oPause', v => v.toFixed(2).replace(/0$/, '') + ' s', v => parseFloat(v));
-bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(v));
-bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
+function bindSettings() {
+  bindSetting('sBatch', 'batch', 'oBatch', v => v, v => parseInt(v, 10));
+  bindSetting('sPause', 'endPause', 'oPause', v => v.toFixed(2).replace(/0$/, '') + ' s', v => parseFloat(v));
+  bindSetting('sRate', 'rate', 'oRate', v => v.toFixed(2) + '×', v => parseFloat(v));
+  bindSetting('sThr', 'thr', 'oThr', v => v, v => parseInt(v, 10));
+  $('sDiag').checked = S.diag;
+}
+bindSettings();
+$('btnDefaults').onclick = () => {
+  Object.assign(S, SETTING_DEFAULTS); lsSet('de.settings', S);
+  bindSettings(); render();
+};
 $('btnShuffle').onclick = () => {
   S.shuffle = !S.shuffle; lsSet('de.settings', S);
   const c = order[pos], was = running;
@@ -744,7 +757,6 @@ $('btnShuffle').onclick = () => {
   moveTo(order.indexOf(c), was);
   if (S.mode === 'focus') { renderFocus(); $('flist').scrollTop = 0; }
 };
-$('sDiag').checked = S.diag;
 $('sDiag').onchange = () => { S.diag = $('sDiag').checked; lsSet('de.settings', S); render(); };
 
 $('buildInfo').textContent = 'Version ' + BUILD;
