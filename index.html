@@ -245,7 +245,6 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <input type="range" id="sThr" min="0" max="100" step="1">
         <p class="note">The app moves on when you speak for about half a second and then stop. While it is listening, the bar on the card shows your mic level. Set the threshold (red line) above room noise and below your voice.</p>
         <div class="toggle"><label for="sGate" style="flex:1">Also require the threshold for speech recognition</label><input type="checkbox" id="sGate"></div>
-        <div class="toggle"><label for="sCar" style="flex:1">Car / Bluetooth audio: turn the mic off while the app speaks (Chrome shows a mic notice each turn)</label><input type="checkbox" id="sCar"></div>
         <div class="toggle"><label for="sDiag" style="flex:1">Show mic diagnostics</label><input type="checkbox" id="sDiag"></div>
       </div>
       <div class="field">
@@ -258,6 +257,7 @@ input[type=number], input[type=search] { width: 100%; min-height: 44px; border-r
         <button class="btn" id="btnReset">Use built-in table</button>
         <p class="note" id="uploadMsg" hidden></p>
       </div>
+      <p class="note" id="buildInfo"></p>
     </div>
   </div>
 </div>
@@ -281,10 +281,11 @@ const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 15, diag: true, endPause: 1.5, car: false, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
-if (!lsGet('de.v2', false)) { S.thr = 15; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
+const BUILD = '2026-10-30 a';  /* bump on every commit so the phone shows which version it runs */
+const S = Object.assign({ batch: 5, rate: 0.9, gate: false, thr: 30, diag: true, endPause: 1.5, shuffle: false, mode: 'drive' }, lsGet('de.settings', {}));
+if (!lsGet('de.v2', false)) { S.thr = 30; S.gate = false; lsSet('de.v2', true); lsSet('de.settings', S); }
 if (!lsGet('de.v3', false)) { S.endPause = 1.5; lsSet('de.v3', true); lsSet('de.settings', S); }
-if (!lsGet('de.v4', false)) { S.car = false; lsSet('de.v4', true); lsSet('de.settings', S); }
+if (!lsGet('de.v5', false)) { S.thr = 30; lsSet('de.v5', true); lsSet('de.settings', S); }
 let phrases = lsGet('de.phrases', null) || DEFAULT.slice();
 let rawRows = lsGet('de.raw', null);
 let swapped = lsGet('de.swapped', false);
@@ -319,15 +320,13 @@ function speak(text, lang) {
     cancelers.add(done);
     t = setTimeout(done, 4000 + text.length * 250 / S.rate);
     u.onend = done; u.onerror = done;
-    const go = () => { if (!fin) speechSynthesis.speak(u); };
-    /* Release the mic so iOS routes the voice to the car / Bluetooth; give the route a moment to switch back. */
-    if (S.car && closeMic()) setTimeout(go, 300); else go();
+    speechSynthesis.speak(u);
   });
 }
 
 /* ---------- mic level and noise gate ---------- */
-/* While the mic is open iOS routes all output to the phone speaker, so with S.car the mic is closed while the app speaks
-   (see speak()) and reopened before each listen. The analyser and its loop live on and read silence while the mic is closed. */
+/* The mic stays open from start() until pause or the page is hidden (releaseAudio()). The analyser and its loop live on and
+   read silence while the mic is closed. */
 let stream = null, analyser = null, actx = null, msrc = null, micFailed = false, peak = 0, level = 0;
 function startMeter() {
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -384,7 +383,7 @@ function diagUpdate() {
   const el = $('diag'); if (!el) return;
   el.textContent = 'mic ' + (stream ? 'on' : 'off') + ' lvl ' + level.toFixed(3) + '/' + threshold().toFixed(3) +
     ' voiced ' + Math.round(vadVoiced) + 'ms | rec ' + diag.rec + (diag.heard ? ' "' + diag.heard + '"' : '') +
-    (diag.err ? ' err ' + diag.err : '') + ' r' + diag.restarts;
+    (diag.err ? ' err ' + diag.err : '') + ' r' + diag.restarts + ' | ' + BUILD;
 }
 
 /* ---------- speech in ---------- */
@@ -523,7 +522,15 @@ function moveTo(i, startIt) {
   savePos(); setPhase(was || startIt ? 'idle' : 'paused');
   if (was || startIt) start(); else releaseAudio();
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden && running) pause(); });
+/* Pages can serve a cached copy for minutes, so ask the server which build is current and reload under a new URL if it differs. */
+async function checkUpdate() {
+  try {
+    const r = await fetch(location.pathname + '?nc=' + Date.now(), { cache: 'no-store' });
+    const m = /const BUILD = '([^']+)'/.exec(await r.text());
+    if (m && m[1] !== BUILD && !running) location.replace(location.pathname + '?v=' + encodeURIComponent(m[1]));
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden && running) pause(); else if (!document.hidden) checkUpdate(); });
 function jumpTo(i) { batchStart = Math.max(0, Math.min(phrases.length - 1, i)); moveTo(i, true); }
 
 /* ---------- rendering ---------- */
@@ -738,11 +745,11 @@ $('btnShuffle').onclick = () => {
   moveTo(order.indexOf(c), was);
   if (S.mode === 'focus') { renderFocus(); $('flist').scrollTop = 0; }
 };
-$('sCar').checked = S.car;
-$('sCar').onchange = () => { S.car = $('sCar').checked; lsSet('de.settings', S); };
 $('sDiag').checked = S.diag;
 $('sDiag').onchange = () => { S.diag = $('sDiag').checked; lsSet('de.settings', S); render(); };
 
+$('buildInfo').textContent = 'Version ' + BUILD;
+checkUpdate();
 if (window.speechSynthesis) speechSynthesis.getVoices();
 render(); tableInfo(); setMode(S.mode);
 </script>
